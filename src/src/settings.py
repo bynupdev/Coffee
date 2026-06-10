@@ -99,7 +99,17 @@ if DEBUG:
 
 else:
     DATABASES = {
-    'default': DATABASE_URL
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': 'neondb',
+            'USER': 'neondb_owner',
+            'PASSWORD': 'npg_hfb83ryTtMVD',
+            'HOST': 'ep-rough-pond-a8tx4aux-pooler.eastus2.azure.neon.tech',
+            'PORT': '5432',
+            'OPTIONS': {
+                'sslmode': 'require',
+            },
+        }
     }
 
 
