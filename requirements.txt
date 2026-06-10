@@ -7,6 +7,7 @@ pyyaml
 pillow
 opencv-python-headless
 numpy
+uvicorn
 
 # absl-py==2.4.0
 # aiohappyeyeballs==2.6.1
