@@ -1,0 +1,12 @@
+{
+  "custom_weight": 0.5,
+  "epochs": 30,
+  "classes": [
+    "Grade_A",
+    "Grade_B",
+    "Grade_C",
+    "Grade_D",
+    "Grade_E"
+  ],
+  "timestamp": "2026-04-24T06:07:07.357105"
+}

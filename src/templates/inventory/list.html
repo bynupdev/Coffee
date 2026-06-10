@@ -1,0 +1,152 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Inventory - Pharmacy Management System{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="card shadow-sm">
+        <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+            <h4 class="mb-0"><i class="fas fa-pills"></i> Drug Inventory</h4>
+            <a href="{% url 'inventory:add' %}" class="btn btn-light btn-sm">
+                <i class="fas fa-plus"></i> Add Drug
+            </a>
+        </div>
+        <div class="card-body">
+            <!-- Search -->
+            <div class="row mb-3">
+                <div class="col-md-4">
+                    <form method="get" class="d-flex gap-2">
+                        <input type="text" name="search" class="form-control" placeholder="Search by name..." value="{{ search_query }}">
+                        <button type="submit" class="btn btn-outline-primary">
+                            <i class="fas fa-search"></i>
+                        </button>
+                        {% if search_query %}
+                            <a href="{% url 'inventory:list' %}" class="btn btn-outline-secondary">Clear</a>
+                        {% endif %}
+                    </form>
+                </div>
+            </div>
+
+            <!-- Drug Table -->
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Generic Name</th>
+                            <th>Strength</th>
+                            <th>Form</th>
+                            <th>Rx Required</th>
+                            <th>Stock</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for drug in drugs %}
+                        <tr>
+                            <td><strong>{{ drug.name }}</strong></td>
+                            <td>{{ drug.generic_name|default:"-" }}</td>
+                            <td>{{ drug.strength }}</td>
+                            <td>{{ drug.get_form_display }}</td>
+                            <td>
+                                {% if drug.requires_prescription %}
+                                    <span class="badge bg-danger">Yes</span>
+                                {% else %}
+                                    <span class="badge bg-success">No</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ drug.total_stock }} units</td>
+                            <td>
+                                <div class="btn-group" role="group">
+                                    <a href="{% url 'inventory:edit' drug.id %}" class="btn btn-sm btn-warning" title="Edit">
+                                        <i class="fas fa-edit"></i>
+                                    </a>
+                                    <a href="{% url 'inventory:add_batch' drug.id %}" class="btn btn-sm btn-success" title="Add Stock">
+                                        <i class="fas fa-plus-circle"></i>
+                                    </a>
+                                    <button type="button" class="btn btn-sm btn-info view-stock-btn" data-drug-id="{{ drug.id }}" data-drug-name="{{ drug.name }}" title="View Stock">
+                                        <i class="fas fa-boxes"></i>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="7" class="text-center py-4">
+                                <i class="fas fa-pills fa-3x text-muted mb-3"></i>
+                                <p>No drugs found.</p>
+                                <a href="{% url 'inventory:add' %}" class="btn btn-primary btn-sm">
+                                    <i class="fas fa-plus"></i> Add Your First Drug
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Stock Modal - Placed OUTSIDE the table and content block -->
+<div class="modal fade" id="stockModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title" id="stockModalTitle">Stock Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="stockModalBody">
+                <div class="text-center">
+                    <i class="fas fa-spinner fa-spin"></i> Loading...
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script>
+// Dynamic stock modal using AJAX
+$(document).ready(function() {
+    $('.view-stock-btn').click(function() {
+        var drugId = $(this).data('drug-id');
+        var drugName = $(this).data('drug-name');
+        
+        $('#stockModalTitle').text(drugName + ' - Stock Details');
+        $('#stockModalBody').html('<div class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading...</div>');
+        
+        // Fetch stock data via AJAX
+        $.get('/inventory/api/stock/' + drugId + '/', function(data) {
+            if (data.batches && data.batches.length > 0) {
+                var html = '<table class="table table-sm">';
+                html += '<thead><tr><th>Batch #</th><th>Quantity</th><th>Expiry Date</th><th>Status</th></tr></thead><tbody>';
+                
+                data.batches.forEach(function(batch) {
+                    var statusClass = batch.quantity == 0 ? 'bg-secondary' : (batch.quantity <= 10 ? 'bg-warning' : 'bg-success');
+                    var statusText = batch.quantity == 0 ? 'Out of Stock' : (batch.quantity <= 10 ? 'Low Stock' : 'In Stock');
+                    
+                    html += '<tr>';
+                    html += '<td><small>' + batch.batch_number + '</small></td>';
+                    html += '<td>' + batch.quantity + '</td>';
+                    html += '<td>' + batch.expiry_date + '</td>';
+                    html += '<td><span class="badge ' + statusClass + '">' + statusText + '</span></td>';
+                    html += '</tr>';
+                });
+                html += '</tbody></table>';
+                $('#stockModalBody').html(html);
+            } else {
+                $('#stockModalBody').html('<p class="text-muted text-center">No stock batches available.</p><div class="text-center"><a href="/inventory/' + drugId + '/add-batch/" class="btn btn-sm btn-success">Add First Batch</a></div>');
+            }
+        }).fail(function() {
+            $('#stockModalBody').html('<p class="text-danger text-center">Error loading stock data.</p>');
+        });
+        
+        $('#stockModal').modal('show');
+    });
+});
+</script>
+{% endblock %}

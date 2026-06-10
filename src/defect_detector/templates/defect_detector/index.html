@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Defect Detection Dashboard</title>
+    <style>
+        body { font-family: Arial; max-width: 1200px; margin: 20px auto; padding: 20px; }
+        .card { border: 1px solid #ddd; padding: 20px; margin: 10px 0; border-radius: 8px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }
+        .status-completed { color: green; }
+        .status-running { color: blue; }
+        .status-failed { color: red; }
+    </style>
+</head>
+<body>
+    <h1>🔍 Coffee Bean Defect Detection</h1>
+    
+    <div class="card">
+        <h2>Available Datasets</h2>
+        <table>
+            <tr>
+                <th>Name</th>
+                <th>Source</th>
+                <th>Images</th>
+                <th>Classes</th>
+            </tr>
+            {% for dataset in datasets %}
+            <tr>
+                <td>{{ dataset.name }}</td>
+                <td>{{ dataset.source }}</td>
+                <td>{{ dataset.num_images }}</td>
+                <td>{{ dataset.num_classes }}</td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="4">No datasets downloaded yet.</td>
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
+    
+    <div class="card">
+        <h2>Training Sessions</h2>
+        <table>
+            <tr>
+                <th>ID</th>
+                <th>Status</th>
+                <th>Started</th>
+                <th>mAP50</th>
+            </tr>
+            {% for session in training_sessions %}
+            <tr>
+                <td>{{ session.id }}</td>
+                <td class="status-{{ session.status }}">{{ session.status }}</td>
+                <td>{{ session.started_at }}</td>
+                <td>{{ session.final_mAP50|default:"-" }}</td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="4">No training sessions yet.</td>
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
+</body>
+</html>

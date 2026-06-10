@@ -1,0 +1,354 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Register - Pharmacy Management System{% endblock %}
+
+{% block extra_css %}
+<style>
+    .register-container {
+        max-width: 600px;
+        margin: 30px auto;
+    }
+    .card {
+        border: none;
+        border-radius: 15px;
+        box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+    }
+    .card-header {
+        background: linear-gradient(135deg, #0a6c75 0%, #2c9a9e 100%);
+        color: white;
+        text-align: center;
+        border-radius: 15px 15px 0 0 !important;
+        padding: 30px;
+    }
+    .card-header i {
+        font-size: 50px;
+        margin-bottom: 15px;
+    }
+    .card-body {
+        padding: 40px;
+    }
+    .form-group {
+        margin-bottom: 20px;
+    }
+    .form-control, .form-select {
+        border-radius: 8px;
+        padding: 10px 12px;
+        border: 1px solid #e0e0e0;
+        width: 100%;
+    }
+    .form-control:focus, .form-select:focus {
+        border-color: #0a6c75;
+        box-shadow: 0 0 0 0.2rem rgba(10,108,117,0.25);
+    }
+    .btn-register {
+        background: linear-gradient(135deg, #0a6c75 0%, #2c9a9e 100%);
+        color: white;
+        border: none;
+        border-radius: 8px;
+        padding: 12px;
+        font-size: 16px;
+        font-weight: 600;
+        width: 100%;
+        transition: all 0.3s;
+    }
+    .btn-register:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 5px 20px rgba(10,108,117,0.4);
+        color: white;
+    }
+    .password-strength {
+        height: 5px;
+        margin-top: 5px;
+        border-radius: 3px;
+        transition: all 0.3s;
+    }
+    .strength-weak { background-color: #dc3545; width: 25%; }
+    .strength-medium { background-color: #ffc107; width: 50%; }
+    .strength-strong { background-color: #28a745; width: 75%; }
+    .strength-very-strong { background-color: #28a745; width: 100%; }
+    .password-requirements {
+        font-size: 12px;
+        list-style: none;
+        padding-left: 0;
+        margin-top: 10px;
+    }
+    .password-requirements li {
+        margin-bottom: 5px;
+    }
+    .password-requirements li i {
+        width: 20px;
+    }
+    .requirement-met {
+        color: #28a745;
+    }
+    .requirement-not-met {
+        color: #dc3545;
+    }
+    .feedback-success {
+        color: #28a745;
+        font-size: 12px;
+        margin-top: 5px;
+    }
+    .feedback-warning {
+        color: #ffc107;
+        font-size: 12px;
+        margin-top: 5px;
+    }
+    .feedback-danger {
+        color: #dc3545;
+        font-size: 12px;
+        margin-top: 5px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="register-container">
+        <div class="card">
+            <div class="card-header">
+                <i class="fas fa-user-plus"></i>
+                <h2>Create Account</h2>
+                <p class="mb-0">Join the Pharmacy Management System</p>
+            </div>
+            <div class="card-body">
+                {% if messages %}
+                    {% for message in messages %}
+                        <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+                            {{ message }}
+                            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                        </div>
+                    {% endfor %}
+                {% endif %}
+
+                <form method="post" id="registerForm">
+                    {% csrf_token %}
+
+                    <!-- Pharmacy Name with real-time feedback -->
+                    <div class="form-group">
+                        <label for="pharmacy_name">
+                            <i class="fas fa-store"></i> Pharmacy Name *
+                        </label>
+                        <input type="text" name="pharmacy_name" id="pharmacy_name" class="form-control" required>
+                        <div id="pharmacy-feedback" class="mt-1"></div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="first_name">
+                                    <i class="fas fa-user"></i> First Name *
+                                </label>
+                                <input type="text" name="first_name" class="form-control" required>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="last_name">
+                                    <i class="fas fa-user"></i> Last Name *
+                                </label>
+                                <input type="text" name="last_name" class="form-control" required>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="username">
+                            <i class="fas fa-at"></i> Username *
+                        </label>
+                        <input type="text" name="username" class="form-control" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="email">
+                            <i class="fas fa-envelope"></i> Email Address *
+                        </label>
+                        <input type="email" name="email" id="email" class="form-control" required>
+                        <div id="email-feedback" class="mt-1"></div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="phone_number">
+                            <i class="fas fa-phone"></i> Phone Number (Optional)
+                        </label>
+                        <input type="tel" name="phone_number" class="form-control">
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="password1">
+                                    <i class="fas fa-lock"></i> Password *
+                                </label>
+                                <input type="password" name="password1" id="password1" class="form-control" required>
+                                <div class="password-strength" id="password-strength"></div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="password2">
+                                    <i class="fas fa-lock"></i> Confirm Password *
+                                </label>
+                                <input type="password" name="password2" id="password2" class="form-control" required>
+                                <div id="password-match" class="mt-1"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <ul class="password-requirements" id="password-requirements">
+                        <li id="length-check"><i class="fas fa-times-circle requirement-not-met"></i> At least 8 characters</li>
+                        <li id="uppercase-check"><i class="fas fa-times-circle requirement-not-met"></i> At least 1 uppercase letter</li>
+                        <li id="lowercase-check"><i class="fas fa-times-circle requirement-not-met"></i> At least 1 lowercase letter</li>
+                        <li id="number-check"><i class="fas fa-times-circle requirement-not-met"></i> At least 1 number</li>
+                        <li id="special-check"><i class="fas fa-times-circle requirement-not-met"></i> At least 1 special character</li>
+                    </ul>
+
+                    <button type="submit" class="btn btn-register" id="submitBtn">
+                        <i class="fas fa-user-plus"></i> Create Account
+                    </button>
+                </form>
+
+                <div class="text-center mt-3">
+                    <p>Already have an account? <a href="{% url 'accounts:login' %}">Login here</a></p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Password strength checker
+const passwordInput = document.getElementById('password1');
+const strengthBar = document.getElementById('password-strength');
+const lengthCheck = document.getElementById('length-check');
+const uppercaseCheck = document.getElementById('uppercase-check');
+const lowercaseCheck = document.getElementById('lowercase-check');
+const numberCheck = document.getElementById('number-check');
+const specialCheck = document.getElementById('special-check');
+const submitBtn = document.getElementById('submitBtn');
+
+function checkPasswordStrength() {
+    const password = passwordInput.value;
+    let strength = 0;
+    
+    // Length check
+    if (password.length >= 8) {
+        lengthCheck.innerHTML = '<i class="fas fa-check-circle requirement-met"></i> At least 8 characters';
+        strength++;
+    } else {
+        lengthCheck.innerHTML = '<i class="fas fa-times-circle requirement-not-met"></i> At least 8 characters';
+    }
+    
+    // Uppercase check
+    if (/[A-Z]/.test(password)) {
+        uppercaseCheck.innerHTML = '<i class="fas fa-check-circle requirement-met"></i> At least 1 uppercase letter';
+        strength++;
+    } else {
+        uppercaseCheck.innerHTML = '<i class="fas fa-times-circle requirement-not-met"></i> At least 1 uppercase letter';
+    }
+    
+    // Lowercase check
+    if (/[a-z]/.test(password)) {
+        lowercaseCheck.innerHTML = '<i class="fas fa-check-circle requirement-met"></i> At least 1 lowercase letter';
+        strength++;
+    } else {
+        lowercaseCheck.innerHTML = '<i class="fas fa-times-circle requirement-not-met"></i> At least 1 lowercase letter';
+    }
+    
+    // Number check
+    if (/[0-9]/.test(password)) {
+        numberCheck.innerHTML = '<i class="fas fa-check-circle requirement-met"></i> At least 1 number';
+        strength++;
+    } else {
+        numberCheck.innerHTML = '<i class="fas fa-times-circle requirement-not-met"></i> At least 1 number';
+    }
+    
+    // Special character check
+    if (/[!@#$%^&*(),.?":{}|<>]/.test(password)) {
+        specialCheck.innerHTML = '<i class="fas fa-check-circle requirement-met"></i> At least 1 special character';
+        strength++;
+    } else {
+        specialCheck.innerHTML = '<i class="fas fa-times-circle requirement-not-met"></i> At least 1 special character';
+    }
+    
+    // Update strength bar
+    strengthBar.className = 'password-strength';
+    if (strength <= 2) {
+        strengthBar.classList.add('strength-weak');
+    } else if (strength === 3) {
+        strengthBar.classList.add('strength-medium');
+    } else if (strength === 4) {
+        strengthBar.classList.add('strength-strong');
+    } else if (strength === 5) {
+        strengthBar.classList.add('strength-very-strong');
+    }
+    
+    // Enable/disable submit button
+    const confirmPassword = document.getElementById('password2').value;
+    submitBtn.disabled = strength !== 5 || password !== confirmPassword;
+}
+
+// Password match checker
+const confirmPassword = document.getElementById('password2');
+const matchIndicator = document.getElementById('password-match');
+
+function checkPasswordMatch() {
+    if (confirmPassword.value === passwordInput.value && passwordInput.value) {
+        matchIndicator.innerHTML = '<span class="feedback-success"><i class="fas fa-check"></i> Passwords match</span>';
+    } else if (confirmPassword.value) {
+        matchIndicator.innerHTML = '<span class="feedback-danger"><i class="fas fa-times"></i> Passwords do not match</span>';
+    } else {
+        matchIndicator.innerHTML = '';
+    }
+    checkPasswordStrength();
+}
+
+passwordInput.addEventListener('input', checkPasswordStrength);
+confirmPassword.addEventListener('input', checkPasswordMatch);
+
+// Real-time pharmacy name check
+document.getElementById('pharmacy_name').addEventListener('blur', function() {
+    const pharmacyName = this.value;
+    const feedback = document.getElementById('pharmacy-feedback');
+    
+    if (pharmacyName.length > 2) {
+        fetch(`/accounts/api/check-pharmacy/?pharmacy_name=${encodeURIComponent(pharmacyName)}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.exists) {
+                    feedback.innerHTML = '<span class="feedback-warning"><i class="fas fa-building"></i> This pharmacy already exists. You will join as an employee and need admin approval.</span>';
+                } else {
+                    feedback.innerHTML = '<span class="feedback-success"><i class="fas fa-check"></i> New pharmacy. You will become the administrator.</span>';
+                }
+            });
+    } else {
+        feedback.innerHTML = '';
+    }
+});
+
+// Real-time email check
+document.getElementById('email').addEventListener('blur', function() {
+    const email = this.value;
+    const feedback = document.getElementById('email-feedback');
+    
+    if (email.includes('@') && email.includes('.')) {
+        fetch(`/accounts/api/check-email/?email=${encodeURIComponent(email)}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.exists) {
+                    feedback.innerHTML = '<span class="feedback-danger"><i class="fas fa-exclamation-triangle"></i> This email is already registered. Please login instead.</span>';
+                } else {
+                    feedback.innerHTML = '<span class="feedback-success"><i class="fas fa-check"></i> Email available</span>';
+                }
+            });
+    } else if (email) {
+        feedback.innerHTML = '<span class="feedback-warning"><i class="fas fa-info-circle"></i> Enter a valid email address</span>';
+    } else {
+        feedback.innerHTML = '';
+    }
+});
+</script>
+{% endblock %}

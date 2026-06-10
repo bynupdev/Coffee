@@ -1,0 +1,164 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Reports - Pharmacy Management System{% endblock %}
+
+{% block extra_css %}
+<style>
+    .report-container {
+        max-width: 1400px;
+        margin: 30px auto;
+    }
+    .report-card {
+        background: white;
+        border-radius: 15px;
+        box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+        margin-bottom: 20px;
+        overflow: hidden;
+    }
+    .report-header {
+        background: linear-gradient(135deg, #0a6c75 0%, #2c9a9e 100%);
+        color: white;
+        padding: 20px;
+    }
+    .report-body {
+        padding: 20px;
+    }
+    .btn-export {
+        background: #0a6c75;
+        color: white;
+        border: none;
+        border-radius: 8px;
+        padding: 8px 20px;
+        margin: 5px;
+    }
+    .btn-export:hover {
+        background: #2c9a9e;
+        color: white;
+    }
+    .filter-form {
+        background: #f8f9fa;
+        padding: 20px;
+        border-radius: 10px;
+        margin-bottom: 20px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container report-container">
+    <div class="report-card">
+        <div class="report-header">
+            <h4 class="mb-0"><i class="fas fa-chart-bar"></i> Reports Dashboard</h4>
+            <p class="mb-0">Generate and export business reports</p>
+        </div>
+        <div class="report-body">
+            <!-- Date Filter Form -->
+            <div class="filter-form">
+                <h5><i class="fas fa-filter"></i> Filter by Date Range</h5>
+                <form method="get" class="row g-3" id="filterForm">
+                    <div class="col-md-4">
+                        <label class="form-label">Date From</label>
+                        <input type="date" name="date_from" id="date_from" class="form-control">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Date To</label>
+                        <input type="date" name="date_to" id="date_to" class="form-control">
+                    </div>
+                    <div class="col-md-4 d-flex align-items-end">
+                        <button type="button" class="btn btn-primary" onclick="applyFilter()">
+                            <i class="fas fa-search"></i> Apply Filter
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Report Buttons -->
+            <div class="row">
+                <div class="col-md-3 mb-3">
+                    <div class="card text-center">
+                        <div class="card-body">
+                            <i class="fas fa-boxes fa-3x text-primary mb-3"></i>
+                            <h5>Inventory Report</h5>
+                            <p class="text-muted">Current stock levels and values</p>
+                            <button class="btn btn-export" onclick="exportReport('inventory')">
+                                <i class="fas fa-download"></i> Export CSV
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="col-md-3 mb-3">
+                    <div class="card text-center">
+                        <div class="card-body">
+                            <i class="fas fa-chart-line fa-3x text-success mb-3"></i>
+                            <h5>Sales Report</h5>
+                            <p class="text-muted">Transaction history and revenue</p>
+                            <button class="btn btn-export" onclick="exportReport('sales')">
+                                <i class="fas fa-download"></i> Export CSV
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="col-md-3 mb-3">
+                    <div class="card text-center">
+                        <div class="card-body">
+                            <i class="fas fa-calendar-alt fa-3x text-warning mb-3"></i>
+                            <h5>Expiry Report</h5>
+                            <p class="text-muted">Medications expiring soon</p>
+                            <button class="btn btn-export" onclick="exportReport('expiry')">
+                                <i class="fas fa-download"></i> Export CSV
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="col-md-3 mb-3">
+                    <div class="card text-center">
+                        <div class="card-body">
+                            <i class="fas fa-prescription-bottle fa-3x text-danger mb-3"></i>
+                            <h5>Prescriptions Report</h5>
+                            <p class="text-muted">Prescription statistics</p>
+                            <button class="btn btn-export" onclick="exportReport('prescriptions')">
+                                <i class="fas fa-download"></i> Export CSV
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="col-md-3 mb-3">
+                    <div class="card text-center">
+                        <div class="card-body">
+                            <i class="fas fa-exclamation-triangle fa-3x text-warning mb-3"></i>
+                            <h5>Low Stock Report</h5>
+                            <p class="text-muted">Items needing reorder</p>
+                            <button class="btn btn-export" onclick="exportReport('low_stock')">
+                                <i class="fas fa-download"></i> Export CSV
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function exportReport(type) {
+    const dateFrom = document.getElementById('date_from').value;
+    const dateTo = document.getElementById('date_to').value;
+    
+    let url = `/reports/export/?type=${type}&format=csv`;
+    if (dateFrom) url += `&date_from=${dateFrom}`;
+    if (dateTo) url += `&date_to=${dateTo}`;
+    
+    window.location.href = url;
+}
+
+function applyFilter() {
+    // Just refresh the page or update any visible data
+    // For now, it just stores the filter values for export
+}
+</script>
+{% endblock %}

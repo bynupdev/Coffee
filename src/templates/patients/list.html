@@ -1,0 +1,53 @@
+{% extends 'base.html' %}
+
+{% block title %}Patients - Pharmacy Management System{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="card">
+        <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+            <h4 class="mb-0"><i class="fas fa-users"></i> Patients</h4>
+            <a href="{% url 'patients:add' %}" class="btn btn-light btn-sm">
+                <i class="fas fa-plus"></i> Add Patient
+            </a>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Phone</th>
+                            <th>Email</th>
+                            <th>Age</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for patient in patients %}
+                        <tr>
+                            <td>{{ patient.full_name }}</td>
+                            <td>{{ patient.phone }}</td>
+                            <td>{{ patient.email|default:"-" }}</td>
+                            <td>{{ patient.age }}</td>
+                            <td>
+                                <a href="{% url 'patients:detail' patient.id %}" class="btn btn-sm btn-info">
+                                    <i class="fas fa-eye"></i> View
+                                </a>
+                                <a href="{% url 'patients:edit' patient.id %}" class="btn btn-sm btn-warning">
+                                    <i class="fas fa-edit"></i> Edit
+                                </a>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="5" class="text-center">No patients found. <a href="{% url 'patients:add' %}">Add your first patient</a></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
