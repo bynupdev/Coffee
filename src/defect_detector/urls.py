@@ -9,4 +9,6 @@ urlpatterns = [
     path('api/analyze/', views.esp32_analysis_api, name='esp32_analyze'),
     path('api/status/', views.device_status_api, name='device_status'),
     path('api/datasets/', views.dataset_list_api, name='defect_datasets'),
+    path('gallery/', views.view_captured_images, name='gallery'),
+    
 ]

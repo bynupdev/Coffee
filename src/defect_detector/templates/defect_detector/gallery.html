@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Captured Images</title>
+    <style>
+        body { font-family: Arial; max-width: 1000px; margin: 20px auto; padding: 20px; }
+        img { max-width: 400px; margin: 10px; border: 2px solid #ddd; border-radius: 5px; }
+        h1 { color: #6f4e37; }
+    </style>
+</head>
+<body>
+    <h1>📸 Captured Coffee Images ({{ total }})</h1>
+    {% for img in images %}
+    <div>
+        <img src="{{ img.url }}" alt="{{ img.name }}">
+        <p>{{ img.name }}</p>
+    </div>
+    {% empty %}
+    <p>No images yet. Take some photos!</p>
+    {% endfor %}
+</body>
+</html>

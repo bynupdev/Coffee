@@ -286,3 +286,30 @@ def format_for_esp32(results, enabled_detections):
         'led_state': led_state,
         'display_text': '\n'.join(lines)
     }
+
+
+import os
+from django.conf import settings
+from django.shortcuts import render
+
+def view_captured_images(request):
+    """View to browse captured images"""
+    images = []
+    capture_dir = os.path.join(settings.MEDIA_ROOT, 'captured_images')
+    
+    if os.path.exists(capture_dir):
+        for root, dirs, files in os.walk(capture_dir):
+            for file in files:
+                if file.endswith('.jpg'):
+                    full_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(full_path, settings.MEDIA_ROOT)
+                    images.append({
+                        'name': file,
+                        'url': f'/media/{rel_path.replace(os.sep, "/")}'
+                    })
+    
+    images.sort(key=lambda x: x['name'], reverse=True)
+    return render(request, 'defect_detector/gallery.html', {
+        'images': images[:20],
+        'total': len(images)
+    })
