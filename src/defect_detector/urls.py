@@ -10,5 +10,6 @@ urlpatterns = [
     path('api/status/', views.device_status_api, name='device_status'),
     path('api/datasets/', views.dataset_list_api, name='defect_datasets'),
     path('gallery/', views.view_captured_images, name='gallery'),
+    path('image/<path:path>', views.serve_captured_image, name='serve_image'),
     
 ]

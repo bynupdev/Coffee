@@ -288,8 +288,10 @@ def format_for_esp32(results, enabled_detections):
     }
 
 
+
 import os
 from django.conf import settings
+from django.http import HttpResponse, Http404
 from django.shortcuts import render
 
 def view_captured_images(request):
@@ -305,7 +307,7 @@ def view_captured_images(request):
                     rel_path = os.path.relpath(full_path, settings.MEDIA_ROOT)
                     images.append({
                         'name': file,
-                        'url': f'/media/{rel_path.replace(os.sep, "/")}'
+                        'url': f'/defects/image/{rel_path.replace(os.sep, "/")}'
                     })
     
     images.sort(key=lambda x: x['name'], reverse=True)
@@ -313,3 +315,15 @@ def view_captured_images(request):
         'images': images[:20],
         'total': len(images)
     })
+
+def serve_captured_image(request, path):
+    """Serve captured images directly"""
+    import re
+    # Sanitize path to prevent directory traversal
+    safe_path = re.sub(r'[^a-zA-Z0-9_/\.-]', '', path)
+    full_path = os.path.join(settings.MEDIA_ROOT, safe_path)
+    
+    if os.path.exists(full_path) and full_path.endswith('.jpg'):
+        with open(full_path, 'rb') as f:
+            return HttpResponse(f.read(), content_type='image/jpeg')
+    raise Http404("Image not found")
