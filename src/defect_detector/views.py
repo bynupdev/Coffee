@@ -176,28 +176,45 @@ def esp32_analysis_api(request):
         foreign_details = []
         
         # 1. FOREIGN MATTER DETECTION
+        # 1. FOREIGN MATTER DETECTION
         try:
             project = workspace.project("coffee-beans-defects-5hfat")
             version = project.version(1)
-            predictions = version.model.predict(temp_path, confidence=20).json()
+            predictions = version.model.predict(temp_path, confidence=5).json()
             
-            print(f"Foreign model raw response: {predictions}")
+            # Count everything that isn't "good"
+            defect_counts = {}
+            good_count = 0
             
             for pred in predictions.get('predictions', []):
                 cls = pred.get('class', '')
                 conf = pred.get('confidence', 0)
                 
-                # Check for any non-good detection
-                if cls != 'good' and conf > 0.3:
-                    foreign_details.append(f"{cls}({conf:.0%})")
-                    
-            if foreign_details:
-                foreign = ", ".join(foreign_details[:3])  # Show up to 3 issues
+                if cls == 'good':
+                    good_count += 1
+                elif conf > 0.08:  # Very low threshold - catch everything
+                    if cls not in defect_counts:
+                        defect_counts[cls] = 0
+                    defect_counts[cls] += 1
+            
+            # Also calculate defect ratio
+            total = good_count + sum(defect_counts.values())
+            
+            if defect_counts:
+                items = []
+                for cls, count in defect_counts.items():
+                    items.append(f"{cls}:{count}")
+                foreign = ", ".join(items[:3])
+                if total > 0:
+                    defect_pct = (sum(defect_counts.values()) * 100) // total
+                    foreign += f"({defect_pct}%)"
             else:
                 foreign = "None"
                 
-            print(f"Foreign result: {foreign}")
-            
+        except Exception as e:
+            print(f"Foreign detection error: {traceback.format_exc()}")
+            foreign = "Error"
+
         except Exception as e:
             print(f"Foreign detection error: {traceback.format_exc()}")
             foreign = "Error"
