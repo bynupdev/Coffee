@@ -137,84 +137,140 @@ def get_model_manager():
 @csrf_exempt
 @require_http_methods(["POST"])
 def esp32_analysis_api(request):
+    """Main endpoint for ESP32-CAM devices - calls Roboflow API"""
     import os
     import traceback
     from datetime import datetime
     from django.conf import settings
     
-    print("\n" + "="*50)
-    print("NEW REQUEST RECEIVED")
-    print("="*50)
-    
     try:
-        # Debug: Print all headers
-        print("HEADERS:")
-        for key, value in request.headers.items():
-            print(f"  {key}: {value}")
-        
-        # Get image
         image_bytes = None
-        source = "unknown"
         
         if request.FILES and 'image' in request.FILES:
-            image_bytes = request.FILES['image'].read()
-            source = "FILES"
-            print(f"Image from FILES: {len(image_bytes)} bytes")
+            image_file = request.FILES['image']
+            image_bytes = image_file.read()
         elif request.body and len(request.body) > 100:
             image_bytes = request.body
-            source = "BODY"
-            print(f"Image from BODY: {len(image_bytes)} bytes")
         else:
-            print("NO IMAGE DATA FOUND")
-            return JsonResponse({'error': 'No image'}, status=400)
+            return JsonResponse({
+                'error': 'No image data',
+                'lines': ['ERROR', 'No image sent', '================'],
+                'led_state': 'red'
+            }, status=400)
         
-        # Debug: Check save header
-        save_header = request.headers.get('X-Save-Image', 'NOT SET')
-        print(f"X-Save-Image header: '{save_header}'")
+        # Save image
+        save_image = request.headers.get('X-Save-Image', 'false').lower() == 'true'
+        if save_image:
+            try:
+                today = datetime.now()
+                save_dir = os.path.join(settings.MEDIA_ROOT, 'captured_images',
+                                       today.strftime('%Y'), today.strftime('%m'))
+                os.makedirs(save_dir, exist_ok=True)
+                filename = f"debug_{today.strftime('%Y%m%d_%H%M%S_%f')}.jpg"
+                filepath = os.path.join(save_dir, filename)
+                with open(filepath, 'wb') as f:
+                    f.write(image_bytes)
+                print(f"File saved! Size: {len(image_bytes)} bytes")
+            except Exception as e:
+                print(f"Save error: {e}")
         
-        # FORCE SAVE EVERY IMAGE for testing
-        try:
-            today = datetime.now()
-            save_dir = os.path.join(settings.MEDIA_ROOT, 'captured_images',
-                                   today.strftime('%Y'), today.strftime('%m'))
-            print(f"Save directory: {save_dir}")
-            
-            os.makedirs(save_dir, exist_ok=True)
-            print(f"Directory exists: {os.path.exists(save_dir)}")
-            
-            filename = f"debug_{today.strftime('%Y%m%d_%H%M%S_%f')}.jpg"
-            filepath = os.path.join(save_dir, filename)
-            print(f"Attempting save to: {filepath}")
-            
-            with open(filepath, 'wb') as f:
-                f.write(image_bytes)
-            
-            print(f"File saved! Size: {os.path.getsize(filepath)} bytes")
-            print(f"File exists: {os.path.exists(filepath)}")
-            
-        except Exception as e:
-            print(f"SAVE ERROR: {e}")
-            print(traceback.format_exc())
-        
-        # Run inference
-        model_manager = get_model_manager()
+        # Get detection types
         detection_header = request.headers.get('X-Detection-Types', 'foreign_matter,quality,bean_type')
-        enabled_detections = [d.strip() for d in detection_header.split(',') if d.strip()]
-        valid_types = list(model_manager.model_configs.keys())
-        enabled_detections = [d for d in enabled_detections if d in valid_types]
+        enabled = [d.strip() for d in detection_header.split(',') if d.strip()]
         
-        if not enabled_detections:
-            enabled_detections = ['foreign_matter', 'quality']
+        # Call Roboflow for each model
+        from roboflow import Roboflow
+        rf = Roboflow(api_key=settings.ROBOFLOW_API_KEY)
         
-        results = model_manager.run_inference(image_bytes, enabled_detections)
-        esp32_response = format_for_esp32(results, enabled_detections)
+        # Save temp file for Roboflow
+        temp_path = os.path.join(settings.MEDIA_ROOT, 'temp_analysis.jpg')
+        with open(temp_path, 'wb') as f:
+            f.write(image_bytes)
         
-        return JsonResponse(esp32_response)
+        grade = "unknown"
+        foreign = "None"
+        bean_type = "unknown"
+        
+        # Foreign Matter Detection
+        if 'foreign_matter' in enabled:
+            try:
+                workspace = rf.workspace("mfechos-coffee-workspace")
+                project = workspace.project("coffee-beans-defects-5hfat")
+                version = project.version(1)
+                predictions = version.model.predict(temp_path, confidence=30).json()
+                
+                # Check for foreign matter in predictions
+                for pred in predictions.get('predictions', []):
+                    if pred.get('class') == 'foreign_matter':
+                        foreign = "FOUND"
+                        break
+                    elif pred.get('class') in ['full_black', 'full_sour', 'fungus_damage', 'severe_insect_damage']:
+                        foreign = pred.get('class', 'FOUND')
+                        break
+            except Exception as e:
+                print(f"Foreign detection error: {e}")
+        
+        # Quality Grading
+        if 'quality' in enabled:
+            try:
+                workspace = rf.workspace("mfechos-coffee-workspace")
+                project = workspace.project("coffee-bean-quality")
+                version = project.version(1)
+                predictions = version.model.predict(temp_path, confidence=30).json()
+                
+                for pred in predictions.get('predictions', []):
+                    predicted_class = pred.get('class', '')
+                    if 'Grade' in predicted_class or predicted_class in ['A', 'B', 'C']:
+                        grade = predicted_class.replace('Grade ', '')
+                        break
+            except Exception as e:
+                print(f"Quality detection error: {e}")
+        
+        # Bean Type Detection
+        if 'bean_type' in enabled:
+            try:
+                workspace = rf.workspace("mfechos-coffee-workspace")
+                project = workspace.project("coffee-bean-type-8i4hd")
+                version = project.version(1)
+                predictions = version.model.predict(temp_path, confidence=30).json()
+                
+                for pred in predictions.get('predictions', []):
+                    bean_type = pred.get('class', 'unknown')
+                    break
+            except Exception as e:
+                print(f"Type detection error: {e}")
+        
+        # Clean up temp file
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        
+        # Build response
+        lines = [
+            f"Foreign: {foreign}",
+            f"Grade: Grade {grade}",
+            f"Type: {bean_type}",
+            "================"
+        ]
+        
+        led_state = "green"
+        if foreign != "None":
+            led_state = "red"
+        elif grade in ['C', 'D', 'E']:
+            led_state = "yellow"
+        
+        return JsonResponse({
+            'lines': lines,
+            'led_state': led_state,
+            'display_text': '\n'.join(lines)
+        })
         
     except Exception as e:
-        print(f"ERROR: {traceback.format_exc()}")
-        return JsonResponse({'error': str(e)[:100]}, status=500)
-
+        print(f"API error: {traceback.format_exc()}")
+        return JsonResponse({
+            'error': str(e)[:100],
+            'lines': ['ERROR', str(e)[:30], '================'],
+            'led_state': 'red'
+        }, status=500)
 
 @csrf_exempt
 def device_status_api(request):
