@@ -134,140 +134,142 @@ def get_model_manager():
 #         }, status=500)
 
 
+
 @csrf_exempt
 @require_http_methods(["POST"])
 def esp32_analysis_api(request):
-    """Main endpoint for ESP32-CAM devices - calls Roboflow API"""
+    """Main endpoint - calls all three Roboflow models"""
     import os
     import traceback
     from datetime import datetime
     from django.conf import settings
+    from roboflow import Roboflow
     
     try:
+        # Get image
         image_bytes = None
-        
         if request.FILES and 'image' in request.FILES:
-            image_file = request.FILES['image']
-            image_bytes = image_file.read()
+            image_bytes = request.FILES['image'].read()
         elif request.body and len(request.body) > 100:
             image_bytes = request.body
         else:
-            return JsonResponse({
-                'error': 'No image data',
-                'lines': ['ERROR', 'No image sent', '================'],
-                'led_state': 'red'
-            }, status=400)
+            return JsonResponse({'error': 'No image'}, status=400)
         
         # Save image
-        save_image = request.headers.get('X-Save-Image', 'false').lower() == 'true'
-        if save_image:
-            try:
-                today = datetime.now()
-                save_dir = os.path.join(settings.MEDIA_ROOT, 'captured_images',
-                                       today.strftime('%Y'), today.strftime('%m'))
-                os.makedirs(save_dir, exist_ok=True)
-                filename = f"debug_{today.strftime('%Y%m%d_%H%M%S_%f')}.jpg"
-                filepath = os.path.join(save_dir, filename)
-                with open(filepath, 'wb') as f:
-                    f.write(image_bytes)
-                print(f"File saved! Size: {len(image_bytes)} bytes")
-            except Exception as e:
-                print(f"Save error: {e}")
-        
-        # Get detection types
-        detection_header = request.headers.get('X-Detection-Types', 'foreign_matter,quality,bean_type')
-        enabled = [d.strip() for d in detection_header.split(',') if d.strip()]
-        
-        # Call Roboflow for each model
-        from roboflow import Roboflow
-        rf = Roboflow(api_key=settings.ROBOFLOW_API_KEY)
-        
-        # Save temp file for Roboflow
-        temp_path = os.path.join(settings.MEDIA_ROOT, 'temp_analysis.jpg')
+        today = datetime.now()
+        save_dir = os.path.join(settings.MEDIA_ROOT, 'captured_images',
+                               today.strftime('%Y'), today.strftime('%m'))
+        os.makedirs(save_dir, exist_ok=True)
+        temp_path = os.path.join(save_dir, f"capture_{today.strftime('%Y%m%d_%H%M%S')}.jpg")
         with open(temp_path, 'wb') as f:
             f.write(image_bytes)
+        print(f"Image saved: {temp_path}")
         
-        grade = "unknown"
+        # Connect to Roboflow
+        rf = Roboflow(api_key=settings.ROBOFLOW_API_KEY)
+        workspace = rf.workspace("mfechos-coffee-workspace")
+        
+        # Results
+        grade = "?"
         foreign = "None"
-        bean_type = "unknown"
+        bean_type = "?"
+        foreign_details = []
         
-        # Foreign Matter Detection
-        if 'foreign_matter' in enabled:
-            try:
-                workspace = rf.workspace("mfechos-coffee-workspace")
-                project = workspace.project("coffee-beans-defects-5hfat")
-                version = project.version(1)
-                predictions = version.model.predict(temp_path, confidence=30).json()
+        # 1. FOREIGN MATTER DETECTION
+        try:
+            project = workspace.project("coffee-beans-defects-5hfat")
+            version = project.version(1)
+            predictions = version.model.predict(temp_path, confidence=20).json()
+            
+            print(f"Foreign model raw response: {predictions}")
+            
+            for pred in predictions.get('predictions', []):
+                cls = pred.get('class', '')
+                conf = pred.get('confidence', 0)
                 
-                # Check for foreign matter in predictions
-                for pred in predictions.get('predictions', []):
-                    if pred.get('class') == 'foreign_matter':
-                        foreign = "FOUND"
-                        break
-                    elif pred.get('class') in ['full_black', 'full_sour', 'fungus_damage', 'severe_insect_damage']:
-                        foreign = pred.get('class', 'FOUND')
-                        break
-            except Exception as e:
-                print(f"Foreign detection error: {e}")
-        
-        # Quality Grading
-        if 'quality' in enabled:
-            try:
-                workspace = rf.workspace("mfechos-coffee-workspace")
-                project = workspace.project("coffee-bean-quality")
-                version = project.version(1)
-                predictions = version.model.predict(temp_path, confidence=30).json()
+                # Check for any non-good detection
+                if cls != 'good' and conf > 0.3:
+                    foreign_details.append(f"{cls}({conf:.0%})")
+                    
+            if foreign_details:
+                foreign = ", ".join(foreign_details[:3])  # Show up to 3 issues
+            else:
+                foreign = "None"
                 
-                for pred in predictions.get('predictions', []):
-                    predicted_class = pred.get('class', '')
-                    if 'Grade' in predicted_class or predicted_class in ['A', 'B', 'C']:
-                        grade = predicted_class.replace('Grade ', '')
-                        break
-            except Exception as e:
-                print(f"Quality detection error: {e}")
+            print(f"Foreign result: {foreign}")
+            
+        except Exception as e:
+            print(f"Foreign detection error: {traceback.format_exc()}")
+            foreign = "Error"
         
-        # Bean Type Detection
-        if 'bean_type' in enabled:
-            try:
-                workspace = rf.workspace("mfechos-coffee-workspace")
-                project = workspace.project("coffee-bean-type-8i4hd")
-                version = project.version(1)
-                predictions = version.model.predict(temp_path, confidence=30).json()
+        # 2. QUALITY GRADING
+        try:
+            project = workspace.project("coffee-bean-quality")
+            version = project.version(1)
+            predictions = version.model.predict(temp_path, confidence=20).json()
+            
+            print(f"Quality model raw response: {predictions}")
+            
+            for pred in predictions.get('predictions', []):
+                cls = pred.get('class', '')
+                if 'A' in cls or cls == 'A':
+                    grade = 'A'
+                elif 'B' in cls or cls == 'B':
+                    grade = 'B'
+                elif 'C' in cls or cls == 'C':
+                    grade = 'C'
+                elif 'D' in cls or cls == 'D':
+                    grade = 'D'
+                break
                 
-                for pred in predictions.get('predictions', []):
-                    bean_type = pred.get('class', 'unknown')
-                    break
-            except Exception as e:
-                print(f"Type detection error: {e}")
+            print(f"Grade result: {grade}")
+            
+        except Exception as e:
+            print(f"Quality detection error: {traceback.format_exc()}")
         
-        # Clean up temp file
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
+        # 3. BEAN TYPE
+        try:
+            project = workspace.project("coffee-bean-type-8i4hd")
+            version = project.version(1)
+            predictions = version.model.predict(temp_path, confidence=20).json()
+            
+            print(f"Type model raw response: {predictions}")
+            
+            for pred in predictions.get('predictions', []):
+                bean_type = pred.get('class', '?')
+                break
+                
+            print(f"Type result: {bean_type}")
+            
+        except Exception as e:
+            print(f"Type detection error: {traceback.format_exc()}")
         
         # Build response
         lines = [
             f"Foreign: {foreign}",
-            f"Grade: Grade {grade}",
+            f"Grade: {grade}",
             f"Type: {bean_type}",
             "================"
         ]
         
         led_state = "green"
-        if foreign != "None":
+        if foreign != "None" and foreign != "Error":
             led_state = "red"
         elif grade in ['C', 'D', 'E']:
             led_state = "yellow"
         
-        return JsonResponse({
+        response_data = {
             'lines': lines,
             'led_state': led_state,
             'display_text': '\n'.join(lines)
-        })
+        }
+        
+        print(f"Final response: {response_data}")
+        return JsonResponse(response_data)
         
     except Exception as e:
         print(f"API error: {traceback.format_exc()}")
         return JsonResponse({
-            'error': str(e)[:100],
             'lines': ['ERROR', str(e)[:30], '================'],
             'led_state': 'red'
         }, status=500)
