@@ -192,7 +192,7 @@ def esp32_analysis_api(request):
                 
                 if cls == 'good':
                     good_count += 1
-                elif conf > 0.08:  # Very low threshold - catch everything
+                elif conf > 0.2:  # Very low threshold - catch everything
                     if cls not in defect_counts:
                         defect_counts[cls] = 0
                     defect_counts[cls] += 1
