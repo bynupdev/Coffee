@@ -58,82 +58,6 @@ def get_model_manager():
     from .utils.inference import model_manager
     return model_manager
 
-# @csrf_exempt
-# @require_http_methods(["POST"])
-# def esp32_analysis_api(request):
-#     """
-#     Main endpoint for ESP32-CAM devices
-#     Accepts both raw binary and multipart form data
-#     """
-#     try:
-#         model_manager = get_model_manager()
-        
-#         image_bytes = None
-        
-#         # Check if sent as form data (multipart)
-#         if request.FILES and 'image' in request.FILES:
-#             image_file = request.FILES['image']
-#             image_bytes = image_file.read()
-        
-#         # Check if sent as raw body (ESP32 sends it this way)
-#         elif request.body:
-#             image_bytes = request.body
-        
-#         if not image_bytes:
-#             return JsonResponse({
-#                 'error': 'No image data found',
-#                 'lines': ['ERROR', 'No image sent', '================'],
-#                 'led_state': 'red'
-#             }, status=400)
-        
-#         # Validate image size
-#         if len(image_bytes) < 100:
-#             return JsonResponse({
-#                 'error': 'Image too small',
-#                 'lines': ['ERROR', 'Invalid image', '================'],
-#                 'led_state': 'red'
-#             }, status=400)
-        
-#         if len(image_bytes) > 5 * 1024 * 1024:
-#             return JsonResponse({
-#                 'error': 'Image too large',
-#                 'lines': ['ERROR', 'Image > 5MB', '================'],
-#                 'led_state': 'red'
-#             }, status=400)
-        
-#         # Get enabled detection types from header or query param
-#         detection_header = request.headers.get('X-Detection-Types', 'foreign_matter,quality,bean_type')
-#         enabled_detections = [d.strip() for d in detection_header.split(',') if d.strip()]
-        
-#         # Validate against available models
-#         valid_types = list(model_manager.model_configs.keys())
-#         enabled_detections = [d for d in enabled_detections if d in valid_types]
-        
-#         if not enabled_detections:
-#             return JsonResponse({
-#                 'error': 'No valid detection types',
-#                 'lines': ['ERROR', 'No types enabled', '================'],
-#                 'led_state': 'red'
-#             }, status=400)
-        
-#         # Run inference
-#         results = model_manager.run_inference(image_bytes, enabled_detections)
-        
-#         # Format for ESP32
-#         esp32_response = format_for_esp32(results, enabled_detections)
-        
-#         return JsonResponse(esp32_response)
-        
-#     except Exception as e:
-#         import traceback
-#         traceback.print_exc()
-#         return JsonResponse({
-#             'error': str(e)[:100],
-#             'lines': ['ERROR', str(e)[:30], '================'],
-#             'led_state': 'red'
-#         }, status=500)
-
-
 
 import os
 import traceback
@@ -147,10 +71,17 @@ from roboflow import Roboflow
 @csrf_exempt
 @require_http_methods(["POST"])
 def esp32_analysis_api(request):
-    """Main endpoint - calls all three Roboflow models and parses structure safely"""
+    """Main endpoint with image preprocessing for consistent results"""
+    import os
+    import traceback
+    from datetime import datetime
+    from django.conf import settings
+    from roboflow import Roboflow
+    import cv2
+    import numpy as np
     
     try:
-        # 1. READ INCOMING IMAGE DATA
+        # Get image
         image_bytes = None
         if request.FILES and 'image' in request.FILES:
             image_bytes = request.FILES['image'].read()
@@ -159,132 +90,152 @@ def esp32_analysis_api(request):
         else:
             return JsonResponse({'error': 'No image'}, status=400)
         
-        # 2. FILE SAVING PIPELINE
+        # Save original for debugging
         today = datetime.now()
-        save_dir = os.path.join(settings.MEDIA_ROOT, 'captured_images', today.strftime('%Y'), today.strftime('%m'))
+        save_dir = os.path.join(settings.MEDIA_ROOT, 'captured_images',
+                               today.strftime('%Y'), today.strftime('%m'))
         os.makedirs(save_dir, exist_ok=True)
-        temp_path = os.path.join(save_dir, f"capture_{today.strftime('%Y%m%d_%H%M%S')}.jpg")
         
-        with open(temp_path, 'wb') as f:
+        raw_path = os.path.join(save_dir, f"raw_{today.strftime('%Y%m%d_%H%M%S')}.jpg")
+        with open(raw_path, 'wb') as f:
             f.write(image_bytes)
-        print(f"Image saved: {temp_path}")
         
-        # 3. INITIALIZE ROBOFLOW CLIENT
+        # ===== PREPROCESSING: Fix contrast, crop to square, resize =====
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        
+        if img is not None:
+            h, w = img.shape[:2]
+            
+            # Boost contrast and brightness
+            alpha = 1.3  # Contrast
+            beta = 20    # Brightness
+            img = cv2.convertScaleAbs(img, alpha=alpha, beta=beta)
+            
+            # Crop center square (removes dark edges)
+            square_size = min(h, w)
+            start_x = (w - square_size) // 2
+            start_y = (h - square_size) // 2
+            img = img[start_y:start_y+square_size, start_x:start_x+square_size]
+            
+            # Resize to 640x640 (what Roboflow expects)
+            img = cv2.resize(img, (640, 640), interpolation=cv2.INTER_AREA)
+            
+            # Save preprocessed version
+            processed_path = os.path.join(save_dir, f"processed_{today.strftime('%Y%m%d_%H%M%S')}.jpg")
+            cv2.imwrite(processed_path, img)
+            
+            # Convert back to bytes for Roboflow
+            _, encoded = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 95])
+            image_bytes = encoded.tobytes()
+            
+            temp_path = processed_path
+        else:
+            temp_path = raw_path
+        
+        print(f"Original: {raw_path}")
+        print(f"Processed: {temp_path if img is not None else 'N/A'}")
+        
+        # Connect to Roboflow
         rf = Roboflow(api_key=settings.ROBOFLOW_API_KEY)
         workspace = rf.workspace("mfechos-coffee-workspace")
         
+        # Results
         grade = "?"
         foreign = "None"
         bean_type = "?"
         
-        # --- MODEL 1: FOREIGN MATTER DETECTION ---
+        # ===== GATE 1: QUALITY GRADING (first pass) =====
+        try:
+            project = workspace.project("coffee-bean-quality")
+            version = project.version(1)
+            predictions = version.model.predict(temp_path, confidence=25).json()
+            
+            for pred in predictions.get('predictions', []):
+                cls = pred.get('class', '')
+                if 'A' in cls: grade = 'A'
+                elif 'B' in cls: grade = 'B'
+                elif 'C' in cls: grade = 'C'
+                elif 'D' in cls: grade = 'D'
+                break
+            print(f"Quality: Grade {grade}")
+        except Exception as e:
+            print(f"Quality error: {e}")
+        
+        # ===== GATE 2: FOREIGN MATTER (higher confidence threshold) =====
         try:
             project = workspace.project("coffee-beans-defects-5hfat")
             version = project.version(1)
-            # Fixed: Raised confidence threshold parameter to 25% to ignore sensor speckles
-            predictions = version.model.predict(temp_path, confidence=5).json()
+            predictions = version.model.predict(temp_path, confidence=35).json()
             
             defect_counts = {}
             good_count = 0
             
             for pred in predictions.get('predictions', []):
-                cls = pred.get('class', '').lower()
+                cls = pred.get('class', '')
                 conf = pred.get('confidence', 0)
                 
-                if cls == 'good' or cls == 'bean':
+                if cls == 'good' and conf > 0.30:
                     good_count += 1
-                elif conf > 0.35:  # Confident defect filter threshold
-                    defect_counts[cls] = defect_counts.get(cls, 0) + 1
+                elif cls != 'good' and conf > 0.35:
+                    if cls not in defect_counts:
+                        defect_counts[cls] = 0
+                    defect_counts[cls] += 1
             
-            total = good_count + sum(defect_counts.values())
             if defect_counts:
-                items = [f"{cls}:{count}" for cls, count in defect_counts.items()]
-                foreign = ", ".join(items[:2])
+                items = []
+                for cls, count in defect_counts.items():
+                    items.append(f"{cls}:{count}")
+                foreign = ", ".join(items[:3])
+                total = good_count + sum(defect_counts.values())
                 if total > 0:
-                    defect_pct = (sum(defect_counts.values()) * 100) // total
-                    foreign += f"({defect_pct}%)"
+                    pct = (sum(defect_counts.values()) * 100) // total
+                    foreign += f"({pct}%)"
             else:
                 foreign = "None"
-                
-        except Exception:
-            print(f"Foreign detection error: {traceback.format_exc()}")
-            foreign = "Error"
+            print(f"Foreign: {foreign}")
+        except Exception as e:
+            print(f"Foreign error: {e}")
         
-        # --- MODEL 2: QUALITY GRADING ---
-        try:
-            project = workspace.project("coffee-bean-quality")
-            version = project.version(1)
-            # Fixed confidence value type mapping
-            predictions = version.model.predict(temp_path, confidence=5).json()
-            
-            preds_list = predictions.get('predictions', [])
-            if preds_list:
-                # Sort predictions by confidence so we prioritize the most accurate prediction
-                preds_list = sorted(preds_list, key=lambda x: x.get('confidence', 0), reverse=True)
-                top_cls = preds_list[0].get('class', '').upper()
-                
-                for letter in ['A', 'B', 'C', 'D']:
-                    if letter in top_cls:
-                        grade = letter
-                        break
-                        
-            print(f"Grade result: {grade}")
-        except Exception:
-            print(f"Quality detection error: {traceback.format_exc()}")
-        
-        # --- MODEL 3: BEAN TYPE CLASSIFICATION ---
+        # ===== GATE 3: BEAN TYPE =====
         try:
             project = workspace.project("coffee-bean-type-8i4hd")
             version = project.version(1)
             predictions = version.model.predict(temp_path, confidence=25).json()
             
-            preds_list = predictions.get('predictions', [])
-            if preds_list:
-                preds_list = sorted(preds_list, key=lambda x: x.get('confidence', 0), reverse=True)
-                bean_type = preds_list[0].get('class', '?')
-                
-            print(f"Type result: {bean_type}")
-        except Exception:
-            print(f"Type detection error: {traceback.format_exc()}")
+            for pred in predictions.get('predictions', []):
+                bean_type = pred.get('class', '?')
+                break
+            print(f"Type: {bean_type}")
+        except Exception as e:
+            print(f"Type error: {e}")
         
-        # 4. ORCHESTRATE RESPONSE PAYLOAD
-        # Keep your standard display array lines for backup
+        # Build response
         lines = [
             f"Foreign: {foreign}",
-            f"Grade: {grade}",
+            f"Grade: Grade {grade}",
             f"Type: {bean_type}",
             "================"
         ]
         
         led_state = "green"
-        if foreign != "None" and foreign != "Error":
+        if foreign != "None":
             led_state = "red"
-        elif grade in ['C', 'D']:
+        elif grade in ['C', 'D', 'E']:
             led_state = "yellow"
-            
-        # FIX: Send structural explicit properties so ESP32 parseValue works seamlessly
-        response_data = {
+        
+        return JsonResponse({
             'lines': lines,
             'led_state': led_state,
-            'display_text': '\n'.join(lines),
-            'Foreign': foreign,
-            'Grade': grade,
-            'Type': bean_type
-        }
-        
-        print(f"Final response sent: {response_data}")
-        return JsonResponse(response_data)
+            'display_text': '\n'.join(lines)
+        })
         
     except Exception as e:
-        print(f"API fatal error: {traceback.format_exc()}")
+        print(f"API error: {traceback.format_exc()}")
         return JsonResponse({
-            'lines': ['ERROR', 'Internal Failure', '================'],
-            'led_state': 'red',
-            'Foreign': 'Error',
-            'Grade': '?',
-            'Type': '?'
+            'lines': ['ERROR', str(e)[:30], '================'],
+            'led_state': 'red'
         }, status=500)
-    
 
 @csrf_exempt
 def device_status_api(request):
