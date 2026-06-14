@@ -135,18 +135,22 @@ def get_model_manager():
 
 
 
+import os
+import traceback
+from datetime import datetime
+from django.conf import settings
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_http_methods
+from roboflow import Roboflow
+
 @csrf_exempt
 @require_http_methods(["POST"])
 def esp32_analysis_api(request):
-    """Main endpoint - calls all three Roboflow models"""
-    import os
-    import traceback
-    from datetime import datetime
-    from django.conf import settings
-    from roboflow import Roboflow
+    """Main endpoint - calls all three Roboflow models and parses structure safely"""
     
     try:
-        # Get image
+        # 1. READ INCOMING IMAGE DATA
         image_bytes = None
         if request.FILES and 'image' in request.FILES:
             image_bytes = request.FILES['image'].read()
@@ -155,113 +159,96 @@ def esp32_analysis_api(request):
         else:
             return JsonResponse({'error': 'No image'}, status=400)
         
-        # Save image
+        # 2. FILE SAVING PIPELINE
         today = datetime.now()
-        save_dir = os.path.join(settings.MEDIA_ROOT, 'captured_images',
-                               today.strftime('%Y'), today.strftime('%m'))
+        save_dir = os.path.join(settings.MEDIA_ROOT, 'captured_images', today.strftime('%Y'), today.strftime('%m'))
         os.makedirs(save_dir, exist_ok=True)
         temp_path = os.path.join(save_dir, f"capture_{today.strftime('%Y%m%d_%H%M%S')}.jpg")
+        
         with open(temp_path, 'wb') as f:
             f.write(image_bytes)
         print(f"Image saved: {temp_path}")
         
-        # Connect to Roboflow
+        # 3. INITIALIZE ROBOFLOW CLIENT
         rf = Roboflow(api_key=settings.ROBOFLOW_API_KEY)
         workspace = rf.workspace("mfechos-coffee-workspace")
         
-        # Results
         grade = "?"
         foreign = "None"
         bean_type = "?"
-        foreign_details = []
         
-        # 1. FOREIGN MATTER DETECTION
-        # 1. FOREIGN MATTER DETECTION
+        # --- MODEL 1: FOREIGN MATTER DETECTION ---
         try:
             project = workspace.project("coffee-beans-defects-5hfat")
             version = project.version(1)
-            predictions = version.model.predict(temp_path, confidence=5).json()
+            # Fixed: Raised confidence threshold parameter to 25% to ignore sensor speckles
+            predictions = version.model.predict(temp_path, confidence=25).json()
             
-            # Count everything that isn't "good"
             defect_counts = {}
             good_count = 0
             
             for pred in predictions.get('predictions', []):
-                cls = pred.get('class', '')
+                cls = pred.get('class', '').lower()
                 conf = pred.get('confidence', 0)
                 
-                if cls == 'good':
+                if cls == 'good' or cls == 'bean':
                     good_count += 1
-                elif conf > 0.2:  # Very low threshold - catch everything
-                    if cls not in defect_counts:
-                        defect_counts[cls] = 0
-                    defect_counts[cls] += 1
+                elif conf > 0.35:  # Confident defect filter threshold
+                    defect_counts[cls] = defect_counts.get(cls, 0) + 1
             
-            # Also calculate defect ratio
             total = good_count + sum(defect_counts.values())
-            
             if defect_counts:
-                items = []
-                for cls, count in defect_counts.items():
-                    items.append(f"{cls}:{count}")
-                foreign = ", ".join(items[:3])
+                items = [f"{cls}:{count}" for cls, count in defect_counts.items()]
+                foreign = ", ".join(items[:2])
                 if total > 0:
                     defect_pct = (sum(defect_counts.values()) * 100) // total
                     foreign += f"({defect_pct}%)"
             else:
                 foreign = "None"
                 
-        except Exception as e:
-            print(f"Foreign detection error: {traceback.format_exc()}")
-            foreign = "Error"
-
-        except Exception as e:
+        except Exception:
             print(f"Foreign detection error: {traceback.format_exc()}")
             foreign = "Error"
         
-        # 2. QUALITY GRADING
+        # --- MODEL 2: QUALITY GRADING ---
         try:
             project = workspace.project("coffee-bean-quality")
             version = project.version(1)
-            predictions = version.model.predict(temp_path, confidence=20).json()
+            # Fixed confidence value type mapping
+            predictions = version.model.predict(temp_path, confidence=25).json()
             
-            print(f"Quality model raw response: {predictions}")
-            
-            for pred in predictions.get('predictions', []):
-                cls = pred.get('class', '')
-                if 'A' in cls or cls == 'A':
-                    grade = 'A'
-                elif 'B' in cls or cls == 'B':
-                    grade = 'B'
-                elif 'C' in cls or cls == 'C':
-                    grade = 'C'
-                elif 'D' in cls or cls == 'D':
-                    grade = 'D'
-                break
+            preds_list = predictions.get('predictions', [])
+            if preds_list:
+                # Sort predictions by confidence so we prioritize the most accurate prediction
+                preds_list = sorted(preds_list, key=lambda x: x.get('confidence', 0), reverse=True)
+                top_cls = preds_list[0].get('class', '').upper()
                 
+                for letter in ['A', 'B', 'C', 'D']:
+                    if letter in top_cls:
+                        grade = letter
+                        break
+                        
             print(f"Grade result: {grade}")
-            
-        except Exception as e:
+        except Exception:
             print(f"Quality detection error: {traceback.format_exc()}")
         
-        # 3. BEAN TYPE
+        # --- MODEL 3: BEAN TYPE CLASSIFICATION ---
         try:
             project = workspace.project("coffee-bean-type-8i4hd")
             version = project.version(1)
-            predictions = version.model.predict(temp_path, confidence=20).json()
+            predictions = version.model.predict(temp_path, confidence=25).json()
             
-            print(f"Type model raw response: {predictions}")
-            
-            for pred in predictions.get('predictions', []):
-                bean_type = pred.get('class', '?')
-                break
+            preds_list = predictions.get('predictions', [])
+            if preds_list:
+                preds_list = sorted(preds_list, key=lambda x: x.get('confidence', 0), reverse=True)
+                bean_type = preds_list[0].get('class', '?')
                 
             print(f"Type result: {bean_type}")
-            
-        except Exception as e:
+        except Exception:
             print(f"Type detection error: {traceback.format_exc()}")
         
-        # Build response
+        # 4. ORCHESTRATE RESPONSE PAYLOAD
+        # Keep your standard display array lines for backup
         lines = [
             f"Foreign: {foreign}",
             f"Grade: {grade}",
@@ -272,24 +259,32 @@ def esp32_analysis_api(request):
         led_state = "green"
         if foreign != "None" and foreign != "Error":
             led_state = "red"
-        elif grade in ['C', 'D', 'E']:
+        elif grade in ['C', 'D']:
             led_state = "yellow"
-        
+            
+        # FIX: Send structural explicit properties so ESP32 parseValue works seamlessly
         response_data = {
             'lines': lines,
             'led_state': led_state,
-            'display_text': '\n'.join(lines)
+            'display_text': '\n'.join(lines),
+            'Foreign': foreign,
+            'Grade': grade,
+            'Type': bean_type
         }
         
-        print(f"Final response: {response_data}")
+        print(f"Final response sent: {response_data}")
         return JsonResponse(response_data)
         
     except Exception as e:
-        print(f"API error: {traceback.format_exc()}")
+        print(f"API fatal error: {traceback.format_exc()}")
         return JsonResponse({
-            'lines': ['ERROR', str(e)[:30], '================'],
-            'led_state': 'red'
+            'lines': ['ERROR', 'Internal Failure', '================'],
+            'led_state': 'red',
+            'Foreign': 'Error',
+            'Grade': '?',
+            'Type': '?'
         }, status=500)
+    
 
 @csrf_exempt
 def device_status_api(request):
