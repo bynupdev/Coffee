@@ -182,7 +182,7 @@ def esp32_analysis_api(request):
             project = workspace.project("coffee-beans-defects-5hfat")
             version = project.version(1)
             # Fixed: Raised confidence threshold parameter to 25% to ignore sensor speckles
-            predictions = version.model.predict(temp_path, confidence=25).json()
+            predictions = version.model.predict(temp_path, confidence=5).json()
             
             defect_counts = {}
             good_count = 0
@@ -215,7 +215,7 @@ def esp32_analysis_api(request):
             project = workspace.project("coffee-bean-quality")
             version = project.version(1)
             # Fixed confidence value type mapping
-            predictions = version.model.predict(temp_path, confidence=25).json()
+            predictions = version.model.predict(temp_path, confidence=5).json()
             
             preds_list = predictions.get('predictions', [])
             if preds_list:
