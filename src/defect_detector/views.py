@@ -71,14 +71,12 @@ from roboflow import Roboflow
 @csrf_exempt
 @require_http_methods(["POST"])
 def esp32_analysis_api(request):
-    """Main endpoint with image preprocessing for consistent results"""
+    """Main endpoint - sends raw image directly to all three models"""
     import os
     import traceback
     from datetime import datetime
     from django.conf import settings
     from roboflow import Roboflow
-    import cv2
-    import numpy as np
     
     try:
         # Get image
@@ -90,66 +88,30 @@ def esp32_analysis_api(request):
         else:
             return JsonResponse({'error': 'No image'}, status=400)
         
-        # Save original for debugging
+        # Save image
         today = datetime.now()
         save_dir = os.path.join(settings.MEDIA_ROOT, 'captured_images',
                                today.strftime('%Y'), today.strftime('%m'))
         os.makedirs(save_dir, exist_ok=True)
-        
-        raw_path = os.path.join(save_dir, f"raw_{today.strftime('%Y%m%d_%H%M%S')}.jpg")
-        with open(raw_path, 'wb') as f:
+        temp_path = os.path.join(save_dir, f"capture_{today.strftime('%Y%m%d_%H%M%S')}.jpg")
+        with open(temp_path, 'wb') as f:
             f.write(image_bytes)
         
-        # ===== PREPROCESSING: Fix contrast, crop to square, resize =====
-        nparr = np.frombuffer(image_bytes, np.uint8)
-        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        
-        if img is not None:
-            h, w = img.shape[:2]
-            
-            # Boost contrast and brightness
-            alpha = 1.3  # Contrast
-            beta = 20    # Brightness
-            img = cv2.convertScaleAbs(img, alpha=alpha, beta=beta)
-            
-            # Crop center square (removes dark edges)
-            square_size = min(h, w)
-            start_x = (w - square_size) // 2
-            start_y = (h - square_size) // 2
-            img = img[start_y:start_y+square_size, start_x:start_x+square_size]
-            
-            # Resize to 640x640 (what Roboflow expects)
-            img = cv2.resize(img, (640, 640), interpolation=cv2.INTER_AREA)
-            
-            # Save preprocessed version
-            processed_path = os.path.join(save_dir, f"processed_{today.strftime('%Y%m%d_%H%M%S')}.jpg")
-            cv2.imwrite(processed_path, img)
-            
-            # Convert back to bytes for Roboflow
-            _, encoded = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 95])
-            image_bytes = encoded.tobytes()
-            
-            temp_path = processed_path
-        else:
-            temp_path = raw_path
-        
-        print(f"Original: {raw_path}")
-        print(f"Processed: {temp_path if img is not None else 'N/A'}")
+        print(f"Image saved: {temp_path} ({len(image_bytes)} bytes)")
         
         # Connect to Roboflow
         rf = Roboflow(api_key=settings.ROBOFLOW_API_KEY)
         workspace = rf.workspace("mfechos-coffee-workspace")
         
-        # Results
         grade = "?"
         foreign = "None"
         bean_type = "?"
         
-        # ===== GATE 1: QUALITY GRADING (first pass) =====
+        # ===== QUALITY GRADING =====
         try:
             project = workspace.project("coffee-bean-quality")
             version = project.version(1)
-            predictions = version.model.predict(temp_path, confidence=25).json()
+            predictions = version.model.predict(temp_path, confidence=20).json()
             
             for pred in predictions.get('predictions', []):
                 cls = pred.get('class', '')
@@ -158,50 +120,59 @@ def esp32_analysis_api(request):
                 elif 'C' in cls: grade = 'C'
                 elif 'D' in cls: grade = 'D'
                 break
-            print(f"Quality: Grade {grade}")
+            print(f"Grade: {grade}")
         except Exception as e:
             print(f"Quality error: {e}")
         
-        # ===== GATE 2: FOREIGN MATTER (higher confidence threshold) =====
+        # ===== FOREIGN MATTER (LOW THRESHOLD - catch everything) =====
         try:
             project = workspace.project("coffee-beans-defects-5hfat")
             version = project.version(1)
-            predictions = version.model.predict(temp_path, confidence=35).json()
+            predictions = version.model.predict(temp_path, confidence=5).json()
             
-            defect_counts = {}
-            good_count = 0
-            
+            # Count ALL classes
+            all_counts = {}
             for pred in predictions.get('predictions', []):
                 cls = pred.get('class', '')
-                conf = pred.get('confidence', 0)
-                
-                if cls == 'good' and conf > 0.30:
-                    good_count += 1
-                elif cls != 'good' and conf > 0.35:
-                    if cls not in defect_counts:
-                        defect_counts[cls] = 0
-                    defect_counts[cls] += 1
+                if cls not in all_counts:
+                    all_counts[cls] = 0
+                all_counts[cls] += 1
+            
+            print(f"All detections: {all_counts}")
+            
+            # Filter to defects only (exclude 'good')
+            defect_classes = ['foreign_matter', 'full_black', 'full_sour', 
+                            'fungus_damage', 'severe_insect_damage', 'dried_pod']
+            
+            defect_counts = {}
+            for cls in defect_classes:
+                if cls in all_counts:
+                    defect_counts[cls] = all_counts[cls]
+            
+            good_count = all_counts.get('good', 0)
+            total_defects = sum(defect_counts.values())
             
             if defect_counts:
                 items = []
                 for cls, count in defect_counts.items():
                     items.append(f"{cls}:{count}")
-                foreign = ", ".join(items[:3])
-                total = good_count + sum(defect_counts.values())
+                foreign = ", ".join(items[:4])
+                total = good_count + total_defects
                 if total > 0:
-                    pct = (sum(defect_counts.values()) * 100) // total
+                    pct = (total_defects * 100) // total
                     foreign += f"({pct}%)"
             else:
                 foreign = "None"
+            
             print(f"Foreign: {foreign}")
         except Exception as e:
-            print(f"Foreign error: {e}")
+            print(f"Foreign error: {traceback.format_exc()}")
         
-        # ===== GATE 3: BEAN TYPE =====
+        # ===== BEAN TYPE =====
         try:
             project = workspace.project("coffee-bean-type-8i4hd")
             version = project.version(1)
-            predictions = version.model.predict(temp_path, confidence=25).json()
+            predictions = version.model.predict(temp_path, confidence=20).json()
             
             for pred in predictions.get('predictions', []):
                 bean_type = pred.get('class', '?')
@@ -237,6 +208,7 @@ def esp32_analysis_api(request):
             'led_state': 'red'
         }, status=500)
 
+        
 @csrf_exempt
 def device_status_api(request):
     """Health check and available models"""
