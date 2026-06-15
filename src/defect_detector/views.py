@@ -129,56 +129,81 @@ def esp32_analysis_api(request):
         try:
             project = workspace.project("coffee-beans-dataset-2-segmentation-peuoq")
             version = project.version(1)
-            predictions = version.model.predict(temp_path, confidence=37).json()
+            predictions = version.model.predict(temp_path, confidence=1).json()
             
-            # Defect classes in lowercase for comparison
-            defect_classes_lower = [
-                'foreign matter', 'parchment', 'full black', 'broken',
-                'fungus damage', 'shell', 'severe insect damage',
-                'slight insect damage', 'immature'
+            # Critical defects (affect grade significantly)
+            critical_defects = [
+                'foreign matter', 'full black', 'fungus damage', 
+                'severe insect damage', 'broken'
             ]
             
+            # Minor defects (common in raw coffee, less impact on grade)
+            minor_defects = [
+                'parchment', 'shell', 'slight insect damage', 'immature'
+            ]
+            
+            # Count everything (convert to lowercase)
             all_counts = {}
             for pred in predictions.get('predictions', []):
-                cls = pred.get('class', '')
-                # Convert to lowercase for consistent counting
-                cls_lower = cls.lower()
-                if cls_lower not in all_counts:
-                    all_counts[cls_lower] = 0
-                all_counts[cls_lower] += 1
+                cls = pred.get('class', '').lower()
+                if cls not in all_counts:
+                    all_counts[cls] = 0
+                all_counts[cls] += 1
             
             print(f"All detections: {all_counts}")
             
             good_count = all_counts.get('good', 0)
             
-            defect_counts = {}
-            total_defects = 0
-            for cls in defect_classes_lower:
-                if cls in all_counts:
-                    defect_counts[cls] = all_counts[cls]
-                    total_defects += all_counts[cls]
+            # Count critical defects
+            critical_counts = {}
+            total_critical = 0
+            for cls in critical_defects:
+                count = all_counts.get(cls, 0)
+                if count > 0:
+                    critical_counts[cls] = count
+                    total_critical += count
             
-            if defect_counts:
-                items = []
-                for cls, count in defect_counts.items():
-                    # Use short display names
-                    short = cls.replace(' ', '_')[:20]
-                    items.append(f"{short}:{count}")
-                foreign = ", ".join(items[:4])
-                total = good_count + total_defects
-                if total > 0:
-                    pct = (total_defects * 100) // total
+            # Count minor defects
+            minor_counts = {}
+            total_minor = 0
+            for cls in minor_defects:
+                count = all_counts.get(cls, 0)
+                if count > 0:
+                    minor_counts[cls] = count
+                    total_minor += count
+            
+            total_defects = total_critical + total_minor
+            total_objects = sum(all_counts.values())
+            
+            # Build result string
+            if critical_counts or minor_counts:
+                parts = []
+                
+                # Show critical defects first (most important)
+                for cls, count in critical_counts.items():
+                    short = cls.replace(' ', '_')[:18]
+                    parts.append(f"{short}:{count}")
+                
+                # Show minor defect total if any
+                if minor_counts:
+                    parts.append(f"minor:{total_minor}")
+                
+                foreign = ", ".join(parts[:4])
+                
+                # Calculate percentage based on critical defects
+                if total_objects > 0:
+                    pct = (total_critical * 100) // total_objects
                     foreign += f"({pct}%)"
             else:
                 foreign = "None"
             
-            print(f"Good: {good_count}, Defects: {total_defects}, Total: {good_count + total_defects}")
+            print(f"Good: {good_count}, Critical: {total_critical}, Minor: {total_minor}, Total: {total_objects}")
             print(f"Foreign result: {foreign}")
             
         except Exception as e:
             print(f"Foreign error: {traceback.format_exc()}")
             foreign = "Error"
-                
+
         # ===== BEAN TYPE =====
         try:
             project = workspace.project("coffee-bean-type-8i4hd")
