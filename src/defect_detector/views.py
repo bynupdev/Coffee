@@ -205,18 +205,42 @@ def esp32_analysis_api(request):
             foreign = "Error"
 
         # ===== BEAN TYPE =====
+        
+        # ===== BEAN TYPE (Arabica/Robusta only) =====
         try:
             project = workspace.project("coffee-bean-type-8i4hd")
             version = project.version(1)
             predictions = version.model.predict(temp_path, confidence=20).json()
             
+            type_counts = {}
             for pred in predictions.get('predictions', []):
-                bean_type = pred.get('class', '?')
-                break
-            print(f"Type: {bean_type}")
+                cls = pred.get('class', '').lower()
+                if cls not in type_counts:
+                    type_counts[cls] = 0
+                type_counts[cls] += 1
+            
+            print(f"Type counts: {type_counts}")
+            
+            # Get the most common type
+            arabica_count = type_counts.get('arabica', 0)
+            robusta_count = type_counts.get('robusta', 0)
+            liberica_count = type_counts.get('liberica', 0)
+            
+            # Map liberica to arabica (they look similar)
+            arabica_count += liberica_count
+            
+            if arabica_count >= robusta_count:
+                bean_type = "arabica"
+            else:
+                bean_type = "robusta"
+            
+            print(f"Type: {bean_type} (arabica:{arabica_count}, robusta:{robusta_count})")
+            
         except Exception as e:
             print(f"Type error: {e}")
-        
+            bean_type = "unrecognised"  # Default to arabica
+
+
         # Build response
         lines = [
             f"Foreign: {foreign}",
