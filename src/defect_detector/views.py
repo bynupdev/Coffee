@@ -125,12 +125,26 @@ def esp32_analysis_api(request):
             print(f"Quality error: {e}")
         
         # ===== FOREIGN MATTER (LOW THRESHOLD - catch everything) =====
+        # ===== FOREIGN MATTER (Segmentation Model - 10 classes) =====
         try:
-            project = workspace.project("coffee-beans-defects-5hfat")
+            project = workspace.project("coffee-beans-dataset-2-segmentation-peuoq")
             version = project.version(1)
             predictions = version.model.predict(temp_path, confidence=5).json()
             
-            # Count ALL classes
+            # All 10 classes from the model
+            all_classes = [
+                'good', 'foreign_matter', 'parchment', 'full_black', 
+                'broken', 'fungus_damage', 'shell', 'severe_insect_damage',
+                'slight_insect_damage', 'immature'
+            ]
+            
+            # Defect classes (everything except 'good')
+            defect_classes = [
+                'foreign_matter', 'parchment', 'full_black', 'broken',
+                'fungus_damage', 'shell', 'severe_insect_damage',
+                'slight_insect_damage', 'immature'
+            ]
+            
             all_counts = {}
             for pred in predictions.get('predictions', []):
                 cls = pred.get('class', '')
@@ -140,17 +154,15 @@ def esp32_analysis_api(request):
             
             print(f"All detections: {all_counts}")
             
-            # Filter to defects only (exclude 'good')
-            defect_classes = ['foreign_matter', 'full_black', 'full_sour', 
-                            'fungus_damage', 'severe_insect_damage', 'dried_pod']
+            good_count = all_counts.get('good', 0)
             
+            # Count all defects
             defect_counts = {}
+            total_defects = 0
             for cls in defect_classes:
                 if cls in all_counts:
                     defect_counts[cls] = all_counts[cls]
-            
-            good_count = all_counts.get('good', 0)
-            total_defects = sum(defect_counts.values())
+                    total_defects += all_counts[cls]
             
             if defect_counts:
                 items = []
@@ -165,8 +177,12 @@ def esp32_analysis_api(request):
                 foreign = "None"
             
             print(f"Foreign: {foreign}")
+            print(f"Good: {good_count}, Defects: {total_defects}, Total: {good_count + total_defects}")
+            
         except Exception as e:
             print(f"Foreign error: {traceback.format_exc()}")
+            foreign = "Error"
+
         
         # ===== BEAN TYPE =====
         try:
