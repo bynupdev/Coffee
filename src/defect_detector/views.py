@@ -125,41 +125,35 @@ def esp32_analysis_api(request):
             print(f"Quality error: {e}")
         
         # ===== FOREIGN MATTER (LOW THRESHOLD - catch everything) =====
-        # ===== FOREIGN MATTER (Segmentation Model - 10 classes) =====
+        # ===== FOREIGN MATTER (Segmentation Model) - Case Insensitive =====
         try:
             project = workspace.project("coffee-beans-dataset-2-segmentation-peuoq")
             version = project.version(1)
-            predictions = version.model.predict(temp_path, confidence=5).json()
+            predictions = version.model.predict(temp_path, confidence=1).json()
             
-            # All 10 classes from the model
-            all_classes = [
-                'good', 'foreign_matter', 'parchment', 'full_black', 
-                'broken', 'fungus_damage', 'shell', 'severe_insect_damage',
-                'slight_insect_damage', 'immature'
-            ]
-            
-            # Defect classes (everything except 'good')
-            defect_classes = [
-                'foreign_matter', 'parchment', 'full_black', 'broken',
-                'fungus_damage', 'shell', 'severe_insect_damage',
-                'slight_insect_damage', 'immature'
+            # Defect classes in lowercase for comparison
+            defect_classes_lower = [
+                'foreign matter', 'parchment', 'full black', 'broken',
+                'fungus damage', 'shell', 'severe insect damage',
+                'slight insect damage', 'immature'
             ]
             
             all_counts = {}
             for pred in predictions.get('predictions', []):
                 cls = pred.get('class', '')
-                if cls not in all_counts:
-                    all_counts[cls] = 0
-                all_counts[cls] += 1
+                # Convert to lowercase for consistent counting
+                cls_lower = cls.lower()
+                if cls_lower not in all_counts:
+                    all_counts[cls_lower] = 0
+                all_counts[cls_lower] += 1
             
             print(f"All detections: {all_counts}")
             
             good_count = all_counts.get('good', 0)
             
-            # Count all defects
             defect_counts = {}
             total_defects = 0
-            for cls in defect_classes:
+            for cls in defect_classes_lower:
                 if cls in all_counts:
                     defect_counts[cls] = all_counts[cls]
                     total_defects += all_counts[cls]
@@ -167,7 +161,9 @@ def esp32_analysis_api(request):
             if defect_counts:
                 items = []
                 for cls, count in defect_counts.items():
-                    items.append(f"{cls}:{count}")
+                    # Use short display names
+                    short = cls.replace(' ', '_')[:20]
+                    items.append(f"{short}:{count}")
                 foreign = ", ".join(items[:4])
                 total = good_count + total_defects
                 if total > 0:
@@ -176,14 +172,13 @@ def esp32_analysis_api(request):
             else:
                 foreign = "None"
             
-            print(f"Foreign: {foreign}")
             print(f"Good: {good_count}, Defects: {total_defects}, Total: {good_count + total_defects}")
+            print(f"Foreign result: {foreign}")
             
         except Exception as e:
             print(f"Foreign error: {traceback.format_exc()}")
             foreign = "Error"
-
-        
+                
         # ===== BEAN TYPE =====
         try:
             project = workspace.project("coffee-bean-type-8i4hd")
