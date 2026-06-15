@@ -129,7 +129,7 @@ def esp32_analysis_api(request):
         try:
             project = workspace.project("coffee-beans-dataset-2-segmentation-peuoq")
             version = project.version(1)
-            predictions = version.model.predict(temp_path, confidence=1).json()
+            predictions = version.model.predict(temp_path, confidence=35).json()
             
             # Critical defects (affect grade significantly)
             critical_defects = [
