@@ -402,6 +402,8 @@ def esp32_analysis_api(request):
             print(f"Minor counts: {minor_counts} (total: {total_minor})")
             print(f"Total objects: {total_objects}")
             
+            # In the foreign matter section, replace the percentage calculation:
+
             if critical_counts or minor_counts:
                 parts = []
                 for cls, count in critical_counts.items():
@@ -412,12 +414,12 @@ def esp32_analysis_api(request):
                 
                 foreign = ", ".join(parts[:4])
                 
-                if total_objects > 0:
+                # Don't show percentage if we can't calculate it properly
+                # Only show percentage if there are non-critical objects too
+                if total_objects > total_critical and total_objects > 0:
                     pct = (total_critical * 100) // total_objects
                     foreign += f"({pct}%)"
-            else:
-                foreign = "None"
-            
+
             print(f"Foreign result: {foreign}")
             print(f"=== END DEBUG ===")
             
