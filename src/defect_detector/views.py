@@ -272,16 +272,15 @@ from roboflow import Roboflow
 @csrf_exempt
 @require_http_methods(["POST"])
 def esp32_analysis_api(request):
-    """Main endpoint with image preprocessing for optimal detection"""
+    """Main endpoint - uses custom trained model for defect detection"""
     import os
     import traceback
     from datetime import datetime
     from django.conf import settings
     from roboflow import Roboflow
-    import cv2
-    import numpy as np
     
     try:
+        # Get image
         image_bytes = None
         if request.FILES and 'image' in request.FILES:
             image_bytes = request.FILES['image'].read()
@@ -290,69 +289,16 @@ def esp32_analysis_api(request):
         else:
             return JsonResponse({'error': 'No image'}, status=400)
         
+        # Save image
         today = datetime.now()
         save_dir = os.path.join(settings.MEDIA_ROOT, 'captured_images',
                                today.strftime('%Y'), today.strftime('%m'))
         os.makedirs(save_dir, exist_ok=True)
-        
-        # Save original (for debugging)
-        raw_path = os.path.join(save_dir, f"raw_{today.strftime('%Y%m%d_%H%M%S')}.jpg")
-        with open(raw_path, 'wb') as f:
+        temp_path = os.path.join(save_dir, f"capture_{today.strftime('%Y%m%d_%H%M%S')}.jpg")
+        with open(temp_path, 'wb') as f:
             f.write(image_bytes)
         
-        # ===== IMAGE PREPROCESSING =====
-        nparr = np.frombuffer(image_bytes, np.uint8)
-        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        
-        if img is not None:
-            # 1. BRIGHTEN: Convert to LAB and boost lightness
-            lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
-            l, a, b = cv2.split(lab)
-            
-            # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
-            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
-            l = clahe.apply(l)
-            
-            lab = cv2.merge((l, a, b))
-            img = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
-            
-            # 2. INCREASE BRIGHTNESS AND CONTRAST
-            alpha = 1.4   # Contrast (1.0-3.0)
-            beta = 25     # Brightness (0-100)
-            img = cv2.convertScaleAbs(img, alpha=alpha, beta=beta)
-            
-            # 3. SHARPEN
-            kernel = np.array([[-1,-1,-1],
-                              [-1, 9,-1],
-                              [-1,-1,-1]])
-            img = cv2.filter2D(img, -1, kernel)
-            
-            # 4. REDUCE NOISE
-            img = cv2.fastNlMeansDenoisingColored(img, None, 5, 5, 7, 21)
-            
-            # 5. CROP CENTER SQUARE (removes dark edges)
-            h, w = img.shape[:2]
-            square_size = min(h, w)
-            start_x = (w - square_size) // 2
-            start_y = (h - square_size) // 2
-            img = img[start_y:start_y+square_size, start_x:start_x+square_size]
-            
-            # 6. RESIZE TO 640x640
-            img = cv2.resize(img, (640, 640), interpolation=cv2.INTER_AREA)
-            
-            # Save processed version
-            processed_path = os.path.join(save_dir, f"processed_{today.strftime('%Y%m%d_%H%M%S')}.jpg")
-            cv2.imwrite(processed_path, img, [cv2.IMWRITE_JPEG_QUALITY, 95])
-            
-            # Convert back to bytes for Roboflow
-            _, encoded = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 95])
-            image_bytes = encoded.tobytes()
-            temp_path = processed_path
-        else:
-            temp_path = raw_path
-        
-        print(f"Original: {raw_path}")
-        print(f"Processed: {temp_path}")
+        print(f"Image saved: {temp_path} ({len(image_bytes)} bytes)")
         
         # Connect to Roboflow
         rf = Roboflow(api_key=settings.ROBOFLOW_API_KEY)
@@ -379,28 +325,17 @@ def esp32_analysis_api(request):
         except Exception as e:
             print(f"Quality error: {e}")
         
-        # ===== FOREIGN MATTER (Segmentation Model) =====
+        # ===== FOREIGN MATTER (Your Custom Model - my-coffee-defects/2) =====
         try:
-            project = workspace.project("coffee-beans-dataset-2-segmentation-peuoq")
-            version = project.version(1)
+            project = workspace.project("my-coffee-defects")
+            version = project.version(2)
             predictions = version.model.predict(temp_path, confidence=1).json()
             
-            # Critical defects
-            critical_defects = [
-                'foreign matter', 'foreign_matter', 'full black', 'full_black',
-                'fungus damage', 'fungus_damage', 'severe insect damage', 
-                'severe_insect_damage', 'broken'
-            ]
-            
-            # Minor defects
-            minor_defects = [
-                'parchment', 'shell', 'slight insect damage', 
-                'slight_insect_damage', 'immature'
-            ]
-            
+            # Your custom classes (all lowercase with underscores)
             all_counts = {}
             for pred in predictions.get('predictions', []):
                 cls = pred.get('class', '').lower()
+                conf = pred.get('confidence', 0)
                 if cls == 'background':
                     continue
                 if cls not in all_counts:
@@ -408,6 +343,17 @@ def esp32_analysis_api(request):
                 all_counts[cls] += 1
             
             print(f"All detections: {all_counts}")
+            
+            # Critical defects
+            critical_defects = [
+                'foreign_matter', 'full_black', 'fungus_damage', 
+                'severe_insect_damage', 'broken'
+            ]
+            
+            # Minor defects
+            minor_defects = [
+                'parchment', 'shell', 'slight_insect_damage', 'immature'
+            ]
             
             critical_counts = {}
             total_critical = 0
@@ -444,11 +390,44 @@ def esp32_analysis_api(request):
             else:
                 foreign = "None"
             
+            print(f"Critical: {total_critical}, Minor: {total_minor}, Total: {total_objects}")
             print(f"Foreign result: {foreign}")
             
         except Exception as e:
             print(f"Foreign error: {traceback.format_exc()}")
             foreign = "Error"
+        
+        # ===== BEAN TYPE (Arabica/Robusta only - map liberica to arabica) =====
+        try:
+            project = workspace.project("coffee-bean-type-8i4hd")
+            version = project.version(1)
+            predictions = version.model.predict(temp_path, confidence=20).json()
+            
+            type_counts = {}
+            for pred in predictions.get('predictions', []):
+                cls = pred.get('class', '').lower()
+                if cls not in type_counts:
+                    type_counts[cls] = 0
+                type_counts[cls] += 1
+            
+            arabica_count = type_counts.get('arabica', 0)
+            robusta_count = type_counts.get('robusta', 0)
+            liberica_count = type_counts.get('liberica', 0)
+            
+            # Map liberica to arabica (they look similar)
+            arabica_count += liberica_count
+            
+            if arabica_count >= robusta_count:
+                bean_type = "arabica"
+            else:
+                bean_type = "robusta"
+            
+            print(f"Type counts: {type_counts}")
+            print(f"Type result: {bean_type}")
+            
+        except Exception as e:
+            print(f"Type error: {e}")
+            bean_type = "arabica"
         
         # Build response
         lines = [
