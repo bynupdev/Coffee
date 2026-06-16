@@ -326,33 +326,51 @@ def esp32_analysis_api(request):
             print(f"Quality error: {e}")
         
         # ===== FOREIGN MATTER (Your Custom Model - my-coffee-defects/2) =====
+        
+        # ===== FOREIGN MATTER (Your Custom Model) =====
         try:
             project = workspace.project("my-coffee-defects")
             version = project.version(2)
-            predictions = version.model.predict(temp_path, confidence=1).json()
+            predictions = version.model.predict(temp_path, confidence=0).json()
             
-            # Your custom classes (all lowercase with underscores)
+            print(f"=== FOREIGN MATTER DEBUG ===")
+            print(f"Total predictions: {len(predictions.get('predictions', []))}")
+            
+            # Print EVERY detection with confidence
             all_counts = {}
             for pred in predictions.get('predictions', []):
-                cls = pred.get('class', '').lower()
+                cls = pred.get('class', '')
                 conf = pred.get('confidence', 0)
-                if cls == 'background':
+                
+                # Convert to lowercase for matching
+                cls_lower = cls.lower()
+                
+                print(f"  Class: {cls} (lower: {cls_lower}) | Confidence: {conf:.4f}")
+                
+                if cls_lower == 'background':
                     continue
-                if cls not in all_counts:
-                    all_counts[cls] = 0
-                all_counts[cls] += 1
+                    
+                if cls_lower not in all_counts:
+                    all_counts[cls_lower] = 0
+                all_counts[cls_lower] += 1
             
-            print(f"All detections: {all_counts}")
+            print(f"All counts (non-background): {all_counts}")
             
-            # Critical defects
+            # Critical defects - try multiple name formats
             critical_defects = [
-                'foreign_matter', 'full_black', 'fungus_damage', 
-                'severe_insect_damage', 'broken'
+                'foreign_matter', 'foreign matter', 'foreign_matter', 'Foreign_matter',
+                'full_black', 'full black', 'Full_black',
+                'fungus_damage', 'fungus damage', 'Fungus_damage',
+                'severe_insect_damage', 'severe insect damage', 'Severe_insect_damage',
+                'broken', 'Broken'
             ]
             
             # Minor defects
             minor_defects = [
-                'parchment', 'shell', 'slight_insect_damage', 'immature'
+                'parchment', 'Parchment',
+                'shell', 'Shell',
+                'slight_insect_damage', 'slight insect damage', 'Slight_insect_damage',
+                'immature', 'Immature'
             ]
             
             critical_counts = {}
@@ -360,7 +378,11 @@ def esp32_analysis_api(request):
             for cls in critical_defects:
                 count = all_counts.get(cls, 0)
                 if count > 0:
-                    critical_counts[cls] = count
+                    # Use simplified name
+                    simple_name = cls.lower().replace(' ', '_')[:20]
+                    if simple_name not in critical_counts:
+                        critical_counts[simple_name] = 0
+                    critical_counts[simple_name] += count
                     total_critical += count
             
             minor_counts = {}
@@ -368,16 +390,22 @@ def esp32_analysis_api(request):
             for cls in minor_defects:
                 count = all_counts.get(cls, 0)
                 if count > 0:
-                    minor_counts[cls] = count
+                    simple_name = cls.lower().replace(' ', '_')[:20]
+                    if simple_name not in minor_counts:
+                        minor_counts[simple_name] = 0
+                    minor_counts[simple_name] += count
                     total_minor += count
             
             total_objects = sum(all_counts.values())
             
+            print(f"Critical counts: {critical_counts} (total: {total_critical})")
+            print(f"Minor counts: {minor_counts} (total: {total_minor})")
+            print(f"Total objects: {total_objects}")
+            
             if critical_counts or minor_counts:
                 parts = []
                 for cls, count in critical_counts.items():
-                    short = cls.replace(' ', '_')[:18]
-                    parts.append(f"{short}:{count}")
+                    parts.append(f"{cls}:{count}")
                 
                 if minor_counts:
                     parts.append(f"minor:{total_minor}")
@@ -390,13 +418,14 @@ def esp32_analysis_api(request):
             else:
                 foreign = "None"
             
-            print(f"Critical: {total_critical}, Minor: {total_minor}, Total: {total_objects}")
             print(f"Foreign result: {foreign}")
+            print(f"=== END DEBUG ===")
             
         except Exception as e:
             print(f"Foreign error: {traceback.format_exc()}")
             foreign = "Error"
-        
+
+
         # ===== BEAN TYPE (Arabica/Robusta only - map liberica to arabica) =====
         try:
             project = workspace.project("coffee-bean-type-8i4hd")
