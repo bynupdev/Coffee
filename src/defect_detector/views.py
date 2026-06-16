@@ -312,7 +312,7 @@ def esp32_analysis_api(request):
         try:
             project = workspace.project("coffee-bean-quality")
             version = project.version(1)
-            predictions = version.model.predict(temp_path, confidence=20).json()
+            predictions = version.model.predict(temp_path, confidence=40).json()
             
             for pred in predictions.get('predictions', []):
                 cls = pred.get('class', '')
