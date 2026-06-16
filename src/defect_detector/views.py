@@ -68,18 +68,220 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from roboflow import Roboflow
 
+# @csrf_exempt
+# @require_http_methods(["POST"])
+# def esp32_analysis_api(request):
+#     """Main endpoint - sends raw image directly to all three models"""
+#     import os
+#     import traceback
+#     from datetime import datetime
+#     from django.conf import settings
+#     from roboflow import Roboflow
+    
+#     try:
+#         # Get image
+#         image_bytes = None
+#         if request.FILES and 'image' in request.FILES:
+#             image_bytes = request.FILES['image'].read()
+#         elif request.body and len(request.body) > 100:
+#             image_bytes = request.body
+#         else:
+#             return JsonResponse({'error': 'No image'}, status=400)
+        
+#         # Save image
+#         today = datetime.now()
+#         save_dir = os.path.join(settings.MEDIA_ROOT, 'captured_images',
+#                                today.strftime('%Y'), today.strftime('%m'))
+#         os.makedirs(save_dir, exist_ok=True)
+#         temp_path = os.path.join(save_dir, f"capture_{today.strftime('%Y%m%d_%H%M%S')}.jpg")
+#         with open(temp_path, 'wb') as f:
+#             f.write(image_bytes)
+        
+#         print(f"Image saved: {temp_path} ({len(image_bytes)} bytes)")
+        
+#         # Connect to Roboflow
+#         rf = Roboflow(api_key=settings.ROBOFLOW_API_KEY)
+#         workspace = rf.workspace("mfechos-coffee-workspace")
+        
+#         grade = "?"
+#         foreign = "None"
+#         bean_type = "?"
+        
+#         # ===== QUALITY GRADING =====
+#         try:
+#             project = workspace.project("coffee-bean-quality")
+#             version = project.version(1)
+#             predictions = version.model.predict(temp_path, confidence=20).json()
+            
+#             for pred in predictions.get('predictions', []):
+#                 cls = pred.get('class', '')
+#                 if 'A' in cls: grade = 'A'
+#                 elif 'B' in cls: grade = 'B'
+#                 elif 'C' in cls: grade = 'C'
+#                 elif 'D' in cls: grade = 'D'
+#                 break
+#             print(f"Grade: {grade}")
+#         except Exception as e:
+#             print(f"Quality error: {e}")
+        
+#         # ===== FOREIGN MATTER (LOW THRESHOLD - catch everything) =====
+#         # ===== FOREIGN MATTER (Segmentation Model) - Case Insensitive =====
+#         try:
+#             project = workspace.project("coffee-beans-dataset-2-segmentation-peuoq")
+#             version = project.version(1)
+#             predictions = version.model.predict(temp_path, confidence=40).json()
+            
+#             # Critical defects (affect grade significantly)
+#             critical_defects = [
+#                 'foreign matter', 'full black', 'fungus damage', 
+#                 'severe insect damage', 'broken'
+#             ]
+            
+#             # Minor defects (common in raw coffee, less impact on grade)
+#             minor_defects = [
+#                 'parchment', 'shell', 'slight insect damage', 'immature'
+#             ]
+            
+#             # Count everything (convert to lowercase)
+#             all_counts = {}
+#             for pred in predictions.get('predictions', []):
+#                 cls = pred.get('class', '').lower()
+#                 if cls not in all_counts:
+#                     all_counts[cls] = 0
+#                 all_counts[cls] += 1
+            
+#             print(f"All detections: {all_counts}")
+            
+#             good_count = all_counts.get('good', 0)
+            
+#             # Count critical defects
+#             critical_counts = {}
+#             total_critical = 0
+#             for cls in critical_defects:
+#                 count = all_counts.get(cls, 0)
+#                 if count > 0:
+#                     critical_counts[cls] = count
+#                     total_critical += count
+            
+#             # Count minor defects
+#             minor_counts = {}
+#             total_minor = 0
+#             for cls in minor_defects:
+#                 count = all_counts.get(cls, 0)
+#                 if count > 0:
+#                     minor_counts[cls] = count
+#                     total_minor += count
+            
+#             total_defects = total_critical + total_minor
+#             total_objects = sum(all_counts.values())
+            
+#             # Build result string
+#             if critical_counts or minor_counts:
+#                 parts = []
+                
+#                 # Show critical defects first (most important)
+#                 for cls, count in critical_counts.items():
+#                     short = cls.replace(' ', '_')[:18]
+#                     parts.append(f"{short}:{count}")
+                
+#                 # Show minor defect total if any
+#                 if minor_counts:
+#                     parts.append(f"minor:{total_minor}")
+                
+#                 foreign = ", ".join(parts[:4])
+                
+#                 # Calculate percentage based on critical defects
+#                 if total_objects > 0:
+#                     pct = (total_critical * 100) // total_objects
+#                     foreign += f"({pct}%)"
+#             else:
+#                 foreign = "None"
+            
+#             print(f"Good: {good_count}, Critical: {total_critical}, Minor: {total_minor}, Total: {total_objects}")
+#             print(f"Foreign result: {foreign}")
+            
+#         except Exception as e:
+#             print(f"Foreign error: {traceback.format_exc()}")
+#             foreign = "Error"
+
+#         # ===== BEAN TYPE =====
+        
+#         # ===== BEAN TYPE (Arabica/Robusta only) =====
+#         try:
+#             project = workspace.project("coffee-bean-type-8i4hd")
+#             version = project.version(1)
+#             predictions = version.model.predict(temp_path, confidence=20).json()
+            
+#             type_counts = {}
+#             for pred in predictions.get('predictions', []):
+#                 cls = pred.get('class', '').lower()
+#                 if cls not in type_counts:
+#                     type_counts[cls] = 0
+#                 type_counts[cls] += 1
+            
+#             print(f"Type counts: {type_counts}")
+            
+#             # Get the most common type
+#             arabica_count = type_counts.get('arabica', 0)
+#             robusta_count = type_counts.get('robusta', 0)
+#             liberica_count = type_counts.get('liberica', 0)
+            
+#             # Map liberica to arabica (they look similar)
+#             arabica_count += liberica_count
+            
+#             if arabica_count >= robusta_count:
+#                 bean_type = "arabica"
+#             else:
+#                 bean_type = "robusta"
+            
+#             print(f"Type: {bean_type} (arabica:{arabica_count}, robusta:{robusta_count})")
+            
+#         except Exception as e:
+#             print(f"Type error: {e}")
+#             bean_type = "unrecognised"  # Default to arabica
+
+
+#         # Build response
+#         lines = [
+#             f"Foreign: {foreign}",
+#             f"Grade: Grade {grade}",
+#             f"Type: {bean_type}",
+#             "================"
+#         ]
+        
+#         led_state = "green"
+#         if foreign != "None":
+#             led_state = "red"
+#         elif grade in ['C', 'D', 'E']:
+#             led_state = "yellow"
+        
+#         return JsonResponse({
+#             'lines': lines,
+#             'led_state': led_state,
+#             'display_text': '\n'.join(lines)
+#         })
+        
+#     except Exception as e:
+#         print(f"API error: {traceback.format_exc()}")
+#         return JsonResponse({
+#             'lines': ['ERROR', str(e)[:30], '================'],
+#             'led_state': 'red'
+#         }, status=500)
+
+
 @csrf_exempt
 @require_http_methods(["POST"])
 def esp32_analysis_api(request):
-    """Main endpoint - sends raw image directly to all three models"""
+    """Main endpoint with image preprocessing for optimal detection"""
     import os
     import traceback
     from datetime import datetime
     from django.conf import settings
     from roboflow import Roboflow
+    import cv2
+    import numpy as np
     
     try:
-        # Get image
         image_bytes = None
         if request.FILES and 'image' in request.FILES:
             image_bytes = request.FILES['image'].read()
@@ -88,16 +290,69 @@ def esp32_analysis_api(request):
         else:
             return JsonResponse({'error': 'No image'}, status=400)
         
-        # Save image
         today = datetime.now()
         save_dir = os.path.join(settings.MEDIA_ROOT, 'captured_images',
                                today.strftime('%Y'), today.strftime('%m'))
         os.makedirs(save_dir, exist_ok=True)
-        temp_path = os.path.join(save_dir, f"capture_{today.strftime('%Y%m%d_%H%M%S')}.jpg")
-        with open(temp_path, 'wb') as f:
+        
+        # Save original (for debugging)
+        raw_path = os.path.join(save_dir, f"raw_{today.strftime('%Y%m%d_%H%M%S')}.jpg")
+        with open(raw_path, 'wb') as f:
             f.write(image_bytes)
         
-        print(f"Image saved: {temp_path} ({len(image_bytes)} bytes)")
+        # ===== IMAGE PREPROCESSING =====
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        
+        if img is not None:
+            # 1. BRIGHTEN: Convert to LAB and boost lightness
+            lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+            l, a, b = cv2.split(lab)
+            
+            # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
+            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+            l = clahe.apply(l)
+            
+            lab = cv2.merge((l, a, b))
+            img = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+            
+            # 2. INCREASE BRIGHTNESS AND CONTRAST
+            alpha = 1.4   # Contrast (1.0-3.0)
+            beta = 25     # Brightness (0-100)
+            img = cv2.convertScaleAbs(img, alpha=alpha, beta=beta)
+            
+            # 3. SHARPEN
+            kernel = np.array([[-1,-1,-1],
+                              [-1, 9,-1],
+                              [-1,-1,-1]])
+            img = cv2.filter2D(img, -1, kernel)
+            
+            # 4. REDUCE NOISE
+            img = cv2.fastNlMeansDenoisingColored(img, None, 5, 5, 7, 21)
+            
+            # 5. CROP CENTER SQUARE (removes dark edges)
+            h, w = img.shape[:2]
+            square_size = min(h, w)
+            start_x = (w - square_size) // 2
+            start_y = (h - square_size) // 2
+            img = img[start_y:start_y+square_size, start_x:start_x+square_size]
+            
+            # 6. RESIZE TO 640x640
+            img = cv2.resize(img, (640, 640), interpolation=cv2.INTER_AREA)
+            
+            # Save processed version
+            processed_path = os.path.join(save_dir, f"processed_{today.strftime('%Y%m%d_%H%M%S')}.jpg")
+            cv2.imwrite(processed_path, img, [cv2.IMWRITE_JPEG_QUALITY, 95])
+            
+            # Convert back to bytes for Roboflow
+            _, encoded = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 95])
+            image_bytes = encoded.tobytes()
+            temp_path = processed_path
+        else:
+            temp_path = raw_path
+        
+        print(f"Original: {raw_path}")
+        print(f"Processed: {temp_path}")
         
         # Connect to Roboflow
         rf = Roboflow(api_key=settings.ROBOFLOW_API_KEY)
@@ -105,7 +360,7 @@ def esp32_analysis_api(request):
         
         grade = "?"
         foreign = "None"
-        bean_type = "?"
+        bean_type = "arabica"
         
         # ===== QUALITY GRADING =====
         try:
@@ -124,37 +379,36 @@ def esp32_analysis_api(request):
         except Exception as e:
             print(f"Quality error: {e}")
         
-        # ===== FOREIGN MATTER (LOW THRESHOLD - catch everything) =====
-        # ===== FOREIGN MATTER (Segmentation Model) - Case Insensitive =====
+        # ===== FOREIGN MATTER (Segmentation Model) =====
         try:
             project = workspace.project("coffee-beans-dataset-2-segmentation-peuoq")
             version = project.version(1)
-            predictions = version.model.predict(temp_path, confidence=40).json()
+            predictions = version.model.predict(temp_path, confidence=1).json()
             
-            # Critical defects (affect grade significantly)
+            # Critical defects
             critical_defects = [
-                'foreign matter', 'full black', 'fungus damage', 
-                'severe insect damage', 'broken'
+                'foreign matter', 'foreign_matter', 'full black', 'full_black',
+                'fungus damage', 'fungus_damage', 'severe insect damage', 
+                'severe_insect_damage', 'broken'
             ]
             
-            # Minor defects (common in raw coffee, less impact on grade)
+            # Minor defects
             minor_defects = [
-                'parchment', 'shell', 'slight insect damage', 'immature'
+                'parchment', 'shell', 'slight insect damage', 
+                'slight_insect_damage', 'immature'
             ]
             
-            # Count everything (convert to lowercase)
             all_counts = {}
             for pred in predictions.get('predictions', []):
                 cls = pred.get('class', '').lower()
+                if cls == 'background':
+                    continue
                 if cls not in all_counts:
                     all_counts[cls] = 0
                 all_counts[cls] += 1
             
             print(f"All detections: {all_counts}")
             
-            good_count = all_counts.get('good', 0)
-            
-            # Count critical defects
             critical_counts = {}
             total_critical = 0
             for cls in critical_defects:
@@ -163,7 +417,6 @@ def esp32_analysis_api(request):
                     critical_counts[cls] = count
                     total_critical += count
             
-            # Count minor defects
             minor_counts = {}
             total_minor = 0
             for cls in minor_defects:
@@ -172,75 +425,31 @@ def esp32_analysis_api(request):
                     minor_counts[cls] = count
                     total_minor += count
             
-            total_defects = total_critical + total_minor
             total_objects = sum(all_counts.values())
             
-            # Build result string
             if critical_counts or minor_counts:
                 parts = []
-                
-                # Show critical defects first (most important)
                 for cls, count in critical_counts.items():
                     short = cls.replace(' ', '_')[:18]
                     parts.append(f"{short}:{count}")
                 
-                # Show minor defect total if any
                 if minor_counts:
                     parts.append(f"minor:{total_minor}")
                 
                 foreign = ", ".join(parts[:4])
                 
-                # Calculate percentage based on critical defects
                 if total_objects > 0:
                     pct = (total_critical * 100) // total_objects
                     foreign += f"({pct}%)"
             else:
                 foreign = "None"
             
-            print(f"Good: {good_count}, Critical: {total_critical}, Minor: {total_minor}, Total: {total_objects}")
             print(f"Foreign result: {foreign}")
             
         except Exception as e:
             print(f"Foreign error: {traceback.format_exc()}")
             foreign = "Error"
-
-        # ===== BEAN TYPE =====
         
-        # ===== BEAN TYPE (Arabica/Robusta only) =====
-        try:
-            project = workspace.project("coffee-bean-type-8i4hd")
-            version = project.version(1)
-            predictions = version.model.predict(temp_path, confidence=20).json()
-            
-            type_counts = {}
-            for pred in predictions.get('predictions', []):
-                cls = pred.get('class', '').lower()
-                if cls not in type_counts:
-                    type_counts[cls] = 0
-                type_counts[cls] += 1
-            
-            print(f"Type counts: {type_counts}")
-            
-            # Get the most common type
-            arabica_count = type_counts.get('arabica', 0)
-            robusta_count = type_counts.get('robusta', 0)
-            liberica_count = type_counts.get('liberica', 0)
-            
-            # Map liberica to arabica (they look similar)
-            arabica_count += liberica_count
-            
-            if arabica_count >= robusta_count:
-                bean_type = "arabica"
-            else:
-                bean_type = "robusta"
-            
-            print(f"Type: {bean_type} (arabica:{arabica_count}, robusta:{robusta_count})")
-            
-        except Exception as e:
-            print(f"Type error: {e}")
-            bean_type = "unrecognised"  # Default to arabica
-
-
         # Build response
         lines = [
             f"Foreign: {foreign}",
@@ -268,7 +477,7 @@ def esp32_analysis_api(request):
             'led_state': 'red'
         }, status=500)
 
-        
+
 @csrf_exempt
 def device_status_api(request):
     """Health check and available models"""
