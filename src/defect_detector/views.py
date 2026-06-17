@@ -314,6 +314,8 @@ def esp32_analysis_api(request):
         size_grade = "?"
         mm_per_pixel = None
         bean_measurements = []
+        total_beans_in_sample = 0
+        defect_pct = 0
         
         # ===== STEP 1: FIND COIN FOR CALIBRATION =====
         try:
@@ -351,7 +353,6 @@ def esp32_analysis_api(request):
                     width_px = pred.get('width', 0)
                     height_px = pred.get('height', 0)
                     
-                    # Convert to millimeters
                     width_mm = round(width_px * mm_per_pixel, 1)
                     height_mm = round(height_px * mm_per_pixel, 1)
                     diameter_mm = round((width_mm + height_mm) / 2, 1)
@@ -363,7 +364,8 @@ def esp32_analysis_api(request):
                         'diameter_mm': diameter_mm
                     })
                 
-                print(f"Measured {len(bean_measurements)} beans")
+                total_beans_in_sample = len(bean_measurements)
+                print(f"Measured {total_beans_in_sample} beans")
                 
             except Exception as e:
                 print(f"Bean measurement error: {e}")
@@ -399,12 +401,10 @@ def esp32_analysis_api(request):
                 min_size = min(diameters)
                 max_size = max(diameters)
                 
-                # Uniformity calculation
                 variance = sum((d - avg_size) ** 2 for d in diameters) / len(diameters)
                 std_dev = variance ** 0.5
                 uniformity = round((1.0 - (std_dev / avg_size)) * 100) if avg_size > 0 else 0
                 
-                # Screen size grading (standard coffee screens in mm)
                 if avg_size >= 7.0:
                     size_grade = 'AA'
                 elif avg_size >= 6.3:
@@ -438,7 +438,6 @@ def esp32_analysis_api(request):
             
             print(f"Defects found: {all_counts}")
             
-            # Critical defects
             critical_defects = [
                 'foreign_matter', 'foreign matter',
                 'full_black', 'full black',
@@ -447,7 +446,6 @@ def esp32_analysis_api(request):
                 'broken'
             ]
             
-            # Minor defects
             minor_defects = [
                 'parchment', 'shell',
                 'slight_insect_damage', 'slight insect damage',
@@ -472,7 +470,13 @@ def esp32_analysis_api(request):
                     minor_counts[simple] = count
                     total_minor += count
             
-            total_defect_objects = sum(all_counts.values())
+            # Calculate defect percentage from TOTAL BEANS, not just defects
+            if total_beans_in_sample > 0:
+                defect_pct = min(100, (total_critical * 100) // total_beans_in_sample)
+            elif sum(all_counts.values()) > 0:
+                defect_pct = min(100, (total_critical * 100) // sum(all_counts.values()))
+            else:
+                defect_pct = 0
             
             # Build foreign matter result
             if critical_counts or minor_counts:
@@ -482,16 +486,15 @@ def esp32_analysis_api(request):
                 if minor_counts:
                     parts.append(f"minor:{total_minor}")
                 foreign = ", ".join(parts[:4])
-                
-                if total_defect_objects > 0:
-                    defect_pct = (total_critical * 100) // total_defect_objects
-                    foreign += f"({defect_pct}%)"
+                foreign += f"({defect_pct}%)"
             else:
                 foreign = "None"
                 defect_pct = 0
             
+            print(f"Critical: {total_critical}, Beans: {total_beans_in_sample}, Defect%: {defect_pct}%")
+            
             # ===== STEP 6: COMBINED FINAL GRADE =====
-            if total_defect_objects > 0:
+            if total_beans_in_sample > 0:
                 # Defect-based grade
                 if defect_pct <= 5:
                     defect_grade = 'A'
@@ -502,23 +505,18 @@ def esp32_analysis_api(request):
                 else:
                     defect_grade = 'D'
                 
-                # Combine with size grade
-                if size_grade != '?':
+                # Combine with size grade if available
+                if size_grade and size_grade != '?':
                     grades_order = ['AA', 'A', 'B', 'C', 'D']
                     defect_idx = grades_order.index(defect_grade) if defect_grade in grades_order else 1
                     size_idx = grades_order.index(size_grade) if size_grade in grades_order else 1
-                    
-                    # Take the lower of the two grades
                     final_idx = max(defect_idx, size_idx)
                     grade = grades_order[final_idx]
-                    
                     print(f"Defect grade: {defect_grade}, Size grade: {size_grade}, Final: {grade}")
                 else:
                     grade = defect_grade
             else:
-                grade = 'A' if size_grade == '?' else size_grade
-                if grade == '?':
-                    grade = 'A'
+                grade = 'A'
             
         except Exception as e:
             print(f"Defect detection error: {traceback.format_exc()}")
@@ -570,7 +568,8 @@ def esp32_analysis_api(request):
             'lines': ['ERROR', str(e)[:30], '================'],
             'led_state': 'red'
         }, status=500)
-
+    
+    
 @csrf_exempt
 def device_status_api(request):
     """Health check and available models"""
