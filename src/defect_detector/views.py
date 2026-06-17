@@ -273,7 +273,7 @@ from roboflow import Roboflow
 @csrf_exempt
 @require_http_methods(["POST"])
 def esp32_analysis_api(request):
-    """Main endpoint - with detailed debugging"""
+    """Main endpoint - size-based grading with coin calibration"""
     import os
     import traceback
     from datetime import datetime
@@ -281,20 +281,20 @@ def esp32_analysis_api(request):
     from roboflow import Roboflow
     
     try:
-        print("\n" + "="*50)
+        print("\n" + "="*60)
         print("NEW REQUEST RECEIVED")
-        print("="*50)
+        print("="*60)
         
         # Get image
         image_bytes = None
         if request.FILES and 'image' in request.FILES:
             image_bytes = request.FILES['image'].read()
-            print(f"Image from FILES: {len(image_bytes)} bytes")
+            print(f"[IMAGE] From FILES: {len(image_bytes)} bytes")
         elif request.body and len(request.body) > 100:
             image_bytes = request.body
-            print(f"Image from BODY: {len(image_bytes)} bytes")
+            print(f"[IMAGE] From BODY: {len(image_bytes)} bytes")
         else:
-            print("ERROR: No image data found")
+            print("[ERROR] No image data found")
             return JsonResponse({'error': 'No image'}, status=400)
         
         # Save image
@@ -305,13 +305,13 @@ def esp32_analysis_api(request):
         temp_path = os.path.join(save_dir, f"capture_{today.strftime('%Y%m%d_%H%M%S')}.jpg")
         with open(temp_path, 'wb') as f:
             f.write(image_bytes)
-        print(f"Image saved: {temp_path}")
+        print(f"[SAVE] {temp_path}")
         
         # Connect to Roboflow
-        print("Connecting to Roboflow...")
+        print("[ROBOFLOW] Connecting...")
         rf = Roboflow(api_key=settings.ROBOFLOW_API_KEY)
         workspace = rf.workspace("mfechos-coffee-workspace")
-        print("Connected to workspace")
+        print("[ROBOFLOW] Connected to workspace")
         
         COIN_DIAMETER_MM = 22.0
         grade = "?"
@@ -321,94 +321,97 @@ def esp32_analysis_api(request):
         bean_measurements = []
         total_beans_in_sample = 0
         defect_pct = 0
+        size_grade = "?"
+        avg_size = 0
+        uniformity = 0
         
-        # ===== STEP 1: COIN DETECTION =====
-        print("\n--- COIN DETECTION ---")
+        # ===== STEP 1: COIN DETECTION & CALIBRATION =====
+        print("\n" + "-"*40)
+        print("STEP 1: COIN DETECTION")
+        print("-"*40)
         try:
-            print(f"Loading project: coffee-defects-coin2")
             project = workspace.project("coffee-defects-coin2")
-            print(f"Project loaded: {project}")
-            
-            print(f"Loading version 2...")
             version = project.version(2)
-            print(f"Version loaded: {version}")
+            coin_predictions = version.model.predict(temp_path, confidence=50).json()
             
-            print(f"Version type: {type(version)}")
-            print(f"Version dir: {[x for x in dir(version) if not x.startswith('_')]}")
+            preds = coin_predictions.get('predictions', [])
+            print(f"  Predictions received: {len(preds)}")
             
-            if version is None:
-                print("ERROR: Version is None!")
-            else:
-                print(f"Running predict on: {temp_path}")
-                coin_predictions = version.model.predict(temp_path, confidence=50).json()
-                print(f"Coin predictions received: {len(coin_predictions.get('predictions', []))} predictions")
+            for pred in preds:
+                cls = pred.get('class', '')
+                conf = pred.get('confidence', 0)
+                print(f"  Found: '{cls}' ({conf:.0%})")
                 
-                for pred in coin_predictions.get('predictions', []):
-                    cls = pred.get('class', '')
-                    conf = pred.get('confidence', 0)
-                    print(f"  Found: {cls} ({conf:.0%})")
-                    
-                    if cls.lower() == 'coin':
-                        coin_width_px = pred.get('width', 0)
-                        coin_height_px = pred.get('height', 0)
-                        coin_diameter_px = (coin_width_px + coin_height_px) / 2
-                        mm_per_pixel = COIN_DIAMETER_MM / coin_diameter_px
-                        print(f"  COIN FOUND: {coin_diameter_px:.1f}px = {COIN_DIAMETER_MM}mm")
-                        print(f"  Calibration: {mm_per_pixel:.4f} mm/pixel")
-                        break
+                if cls.lower() == 'coin':
+                    coin_w = pred.get('width', 0)
+                    coin_h = pred.get('height', 0)
+                    coin_diameter_px = (coin_w + coin_h) / 2
+                    mm_per_pixel = COIN_DIAMETER_MM / coin_diameter_px
+                    print(f"  ✅ COIN: {coin_diameter_px:.1f}px = {COIN_DIAMETER_MM}mm")
+                    print(f"  ✅ CALIBRATION: {mm_per_pixel:.4f} mm/pixel")
+                    break
+            
+            if mm_per_pixel is None:
+                print("  ⚠️ WARNING: No coin detected!")
                 
-                if mm_per_pixel is None:
-                    print("WARNING: No coin detected in image!")
-                    
         except Exception as e:
-            print(f"COIN ERROR: {type(e).__name__}: {e}")
-            print(f"Full traceback: {traceback.format_exc()}")
+            print(f"  ❌ COIN ERROR: {e}")
         
         # ===== STEP 2: BEAN MEASUREMENT =====
-        print("\n--- BEAN MEASUREMENT ---")
+        print("\n" + "-"*40)
+        print("STEP 2: BEAN MEASUREMENT")
+        print("-"*40)
         if mm_per_pixel:
             try:
-                print("Loading coffee-bean-quality...")
                 project = workspace.project("coffee-bean-quality")
                 version = project.version(1)
                 quality_predictions = version.model.predict(temp_path, confidence=20).json()
                 
                 preds = quality_predictions.get('predictions', [])
-                print(f"Quality model found {len(preds)} beans")
+                print(f"  Beans detected: {len(preds)}")
                 
                 for pred in preds:
                     cls = pred.get('class', '')
-                    width_px = pred.get('width', 0)
-                    height_px = pred.get('height', 0)
-                    width_mm = round(width_px * mm_per_pixel, 1)
-                    height_mm = round(height_px * mm_per_pixel, 1)
-                    diameter_mm = round((width_mm + height_mm) / 2, 1)
+                    w_px = pred.get('width', 0)
+                    h_px = pred.get('height', 0)
+                    w_mm = round(w_px * mm_per_pixel, 1)
+                    h_mm = round(h_px * mm_per_pixel, 1)
+                    d_mm = round((w_mm + h_mm) / 2, 1)
                     
                     bean_measurements.append({
                         'class': cls,
-                        'width_mm': width_mm,
-                        'height_mm': height_mm,
-                        'diameter_mm': diameter_mm
+                        'width_mm': w_mm,
+                        'height_mm': h_mm,
+                        'diameter_mm': d_mm
                     })
                 
                 total_beans_in_sample = len(bean_measurements)
-                print(f"Measured {total_beans_in_sample} beans")
                 
-                # Size stats
                 if bean_measurements:
                     diameters = [b['diameter_mm'] for b in bean_measurements]
-                    avg = sum(diameters) / len(diameters)
-                    print(f"  Avg size: {avg:.1f}mm, Range: {min(diameters):.1f}-{max(diameters):.1f}mm")
+                    avg_size = round(sum(diameters) / len(diameters), 1)
+                    min_size = min(diameters)
+                    max_size = max(diameters)
+                    
+                    variance = sum((d - avg_size) ** 2 for d in diameters) / len(diameters)
+                    std_dev = variance ** 0.5
+                    uniformity = round((1.0 - (std_dev / avg_size)) * 100) if avg_size > 0 else 0
+                    
+                    print(f"  📏 Avg: {avg_size}mm | Range: {min_size}-{max_size}mm")
+                    print(f"  📏 Uniformity: {uniformity}%")
+                else:
+                    print(f"  ⚠️ No beans measured")
                     
             except Exception as e:
-                print(f"BEAN MEASUREMENT ERROR: {type(e).__name__}: {e}")
+                print(f"  ❌ MEASUREMENT ERROR: {e}")
         else:
-            print("SKIPPED: No mm_per_pixel calibration")
+            print("  ⏭️ SKIPPED: No coin calibration available")
         
         # ===== STEP 3: DEFECT DETECTION =====
-        print("\n--- DEFECT DETECTION ---")
+        print("\n" + "-"*40)
+        print("STEP 3: DEFECT DETECTION")
+        print("-"*40)
         try:
-            print("Loading my-coffee-defects...")
             project = workspace.project("my-coffee-defects")
             version = project.version(2)
             defect_predictions = version.model.predict(temp_path, confidence=1).json()
@@ -422,14 +425,22 @@ def esp32_analysis_api(request):
                     all_counts[cls] = 0
                 all_counts[cls] += 1
             
-            print(f"Defects found: {all_counts}")
+            print(f"  All detections: {all_counts}")
             
+            # Critical defects (affect grade)
             critical_defects = [
                 'foreign_matter', 'foreign matter',
                 'full_black', 'full black',
                 'fungus_damage', 'fungus damage',
-                'severe_insect_damage', 'severe insect damage',
                 'broken'
+            ]
+            
+            # Minor defects (reported but don't affect grade)
+            minor_defects = [
+                'parchment', 'shell',
+                'slight_insect_damage', 'slight insect damage',
+                'severe_insect_damage', 'severe insect damage',
+                'immature'
             ]
             
             critical_counts = {}
@@ -441,33 +452,93 @@ def esp32_analysis_api(request):
                     critical_counts[simple] = count
                     total_critical += count
             
-            print(f"Total critical defects: {total_critical}")
+            minor_counts = {}
+            total_minor = 0
+            for cls in minor_defects:
+                count = all_counts.get(cls, 0)
+                if count > 0:
+                    simple = cls.lower().replace(' ', '_')[:20]
+                    minor_counts[simple] = count
+                    total_minor += count
             
-            # Calculate percentage
+            print(f"  Critical: {critical_counts} (total: {total_critical})")
+            print(f"  Minor: {minor_counts} (total: {total_minor})")
+            
+            # Calculate defect percentage
             if total_beans_in_sample > 0:
                 defect_pct = min(100, (total_critical * 100) // total_beans_in_sample)
-                print(f"Using measured beans: {total_beans_in_sample}")
-            elif sum(all_counts.values()) > 0:
-                # Fallback: estimate 40 beans
-                ESTIMATED_BEANS = 40
-                defect_pct = min(100, (total_critical * 100) // ESTIMATED_BEANS)
-                print(f"Using estimated beans: {ESTIMATED_BEANS}")
+                print(f"  Defect %: {total_critical}/{total_beans_in_sample} = {defect_pct}%")
             else:
                 defect_pct = 0
+                print(f"  Defect %: N/A (no bean count)")
             
-            print(f"Defect percentage: {defect_pct}%")
-            
-            # Build foreign result
-            if critical_counts:
+            # Build foreign result string
+            if critical_counts or minor_counts:
                 parts = []
                 for cls, count in critical_counts.items():
                     parts.append(f"{cls}:{count}")
+                if minor_counts:
+                    parts.append(f"minor:{total_minor}")
                 foreign = ", ".join(parts[:4])
-                foreign += f"({defect_pct}%)"
+                if total_beans_in_sample > 0:
+                    foreign += f"({defect_pct}%)"
             else:
                 foreign = "None"
             
-            # Grade
+            print(f"  Foreign result: {foreign}")
+            
+        except Exception as e:
+            print(f"  ❌ DEFECT ERROR: {e}")
+        
+        # ===== STEP 4: SIZE-BASED GRADING =====
+        print("\n" + "-"*40)
+        print("STEP 4: SIZE-BASED GRADING")
+        print("-"*40)
+        
+        if bean_measurements:
+            diameters = [b['diameter_mm'] for b in bean_measurements]
+            avg_size = sum(diameters) / len(diameters)
+            
+            # Industry standard screen sizes
+            if avg_size >= 7.0:
+                size_grade = 'AA'
+            elif avg_size >= 6.3:
+                size_grade = 'A'
+            elif avg_size >= 5.5:
+                size_grade = 'B'
+            elif avg_size >= 4.7:
+                size_grade = 'C'
+            else:
+                size_grade = 'D'
+            
+            print(f"  Avg bean size: {avg_size:.1f}mm")
+            print(f"  Size grade (before defects): {size_grade}")
+            print(f"  Defect %: {defect_pct}%")
+            
+            # Defect penalty
+            grades_order = ['AA', 'A', 'B', 'C', 'D']
+            size_idx = grades_order.index(size_grade)
+            
+            if defect_pct > 30:
+                # Heavy defects: downgrade 2 levels
+                final_idx = min(size_idx + 2, 4)
+                penalty = "DOWN 2"
+            elif defect_pct > 15:
+                # Moderate defects: downgrade 1 level
+                final_idx = min(size_idx + 1, 4)
+                penalty = "DOWN 1"
+            else:
+                # Few defects: keep size grade
+                final_idx = size_idx
+                penalty = "NONE"
+            
+            grade = grades_order[final_idx]
+            
+            print(f"  Penalty: {penalty}")
+            print(f"  ✅ FINAL GRADE: {grade}")
+        else:
+            # Fallback to defect-only grading
+            print(f"  ⚠️ No size data, using defect-only grading")
             if defect_pct <= 5:
                 grade = 'A'
             elif defect_pct <= 15:
@@ -476,15 +547,12 @@ def esp32_analysis_api(request):
                 grade = 'C'
             else:
                 grade = 'D'
-            
-            print(f"Grade: {grade}")
-            
-        except Exception as e:
-            print(f"DEFECT ERROR: {type(e).__name__}: {e}")
-            print(f"Full traceback: {traceback.format_exc()}")
+            print(f"  ✅ FALLBACK GRADE: {grade}")
         
-        # ===== STEP 4: BEAN TYPE =====
-        print("\n--- BEAN TYPE ---")
+        # ===== STEP 5: BEAN TYPE DETECTION =====
+        print("\n" + "-"*40)
+        print("STEP 5: BEAN TYPE")
+        print("-"*40)
         try:
             project = workspace.project("coffee-bean-type-8i4hd")
             version = project.version(1)
@@ -495,24 +563,27 @@ def esp32_analysis_api(request):
                 cls = pred.get('class', '').lower()
                 type_counts[cls] = type_counts.get(cls, 0) + 1
             
-            print(f"Type counts: {type_counts}")
+            print(f"  Type counts: {type_counts}")
             
             arabica_count = type_counts.get('arabica', 0) + type_counts.get('liberica', 0)
             robusta_count = type_counts.get('robusta', 0)
             
             bean_type = "arabica" if arabica_count >= robusta_count else "robusta"
-            print(f"Type result: {bean_type}")
+            print(f"  ✅ Type: {bean_type}")
             
         except Exception as e:
-            print(f"TYPE ERROR: {e}")
+            print(f"  ⚠️ Type error: {e}, defaulting to arabica")
             bean_type = "arabica"
         
-        # ===== BUILD RESPONSE =====
-        print(f"\n--- FINAL RESULT ---")
-        print(f"Foreign: {foreign}")
-        print(f"Grade: {grade}")
-        print(f"Type: {bean_type}")
-        print("="*50 + "\n")
+        # ===== BUILD FINAL RESPONSE =====
+        print("\n" + "="*60)
+        print("FINAL RESULT")
+        print("="*60)
+        print(f"  Foreign: {foreign}")
+        print(f"  Grade: {grade} (size: {size_grade}, defect%: {defect_pct}%, uniformity: {uniformity}%)")
+        print(f"  Type: {bean_type}")
+        print(f"  Bean count: {total_beans_in_sample}, Avg size: {avg_size}mm")
+        print("="*60 + "\n")
         
         lines = [
             f"Foreign: {foreign}",
@@ -522,7 +593,7 @@ def esp32_analysis_api(request):
         ]
         
         led_state = "green"
-        if foreign != "None":
+        if foreign != "None" and defect_pct > 10:
             led_state = "red"
         elif grade in ['C', 'D']:
             led_state = "yellow"
@@ -534,12 +605,13 @@ def esp32_analysis_api(request):
         })
         
     except Exception as e:
-        print(f"FATAL API ERROR: {traceback.format_exc()}")
+        print(f"\n❌ FATAL ERROR: {traceback.format_exc()}\n")
         return JsonResponse({
             'lines': ['ERROR', str(e)[:30], '================'],
             'led_state': 'red'
         }, status=500)
-    
+
+
 
 
 def device_status_api(request):
