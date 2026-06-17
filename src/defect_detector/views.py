@@ -272,7 +272,7 @@ from roboflow import Roboflow
 @csrf_exempt
 @require_http_methods(["POST"])
 def esp32_analysis_api(request):
-    """Main endpoint - uses custom trained model for defect detection"""
+    """Main endpoint - uses coin calibration for accurate bean sizing"""
     import os
     import traceback
     from datetime import datetime
@@ -304,73 +304,154 @@ def esp32_analysis_api(request):
         rf = Roboflow(api_key=settings.ROBOFLOW_API_KEY)
         workspace = rf.workspace("mfechos-coffee-workspace")
         
+        # Constants
+        COIN_DIAMETER_MM = 22.0  # Your coin: 2.2cm = 22mm
+        
+        # Results
         grade = "?"
         foreign = "None"
-        bean_type = "arabica"
+        bean_type = "?"
+        size_grade = "?"
+        mm_per_pixel = None
+        bean_measurements = []
         
-        # ===== QUALITY GRADING =====
+        # ===== STEP 1: FIND COIN FOR CALIBRATION =====
         try:
-            project = workspace.project("coffee-bean-quality")
+            project = workspace.project("coffee-defects-coin2")
             version = project.version(1)
-            predictions = version.model.predict(temp_path, confidence=40).json()
+            coin_predictions = version.model.predict(temp_path, confidence=50).json()
             
-            for pred in predictions.get('predictions', []):
-                cls = pred.get('class', '')
-                if 'A' in cls: grade = 'A'
-                elif 'B' in cls: grade = 'B'
-                elif 'C' in cls: grade = 'C'
-                elif 'D' in cls: grade = 'D'
-                break
-            print(f"Grade: {grade}")
+            for pred in coin_predictions.get('predictions', []):
+                if pred.get('class', '').lower() == 'coin':
+                    coin_width_px = pred.get('width', 0)
+                    coin_height_px = pred.get('height', 0)
+                    coin_diameter_px = (coin_width_px + coin_height_px) / 2
+                    
+                    mm_per_pixel = COIN_DIAMETER_MM / coin_diameter_px
+                    
+                    print(f"Coin found: {coin_diameter_px:.1f}px = {COIN_DIAMETER_MM}mm")
+                    print(f"Calibration: {mm_per_pixel:.4f} mm/pixel")
+                    break
+            
+            if mm_per_pixel is None:
+                print("WARNING: No coin detected in image!")
+                
         except Exception as e:
-            print(f"Quality error: {e}")
+            print(f"Coin detection error: {e}")
         
-        # ===== FOREIGN MATTER (Your Custom Model - my-coffee-defects/2) =====
+        # ===== STEP 2: MEASURE BEANS (from quality model) =====
+        if mm_per_pixel:
+            try:
+                project = workspace.project("coffee-bean-quality")
+                version = project.version(1)
+                quality_predictions = version.model.predict(temp_path, confidence=20).json()
+                
+                for pred in quality_predictions.get('predictions', []):
+                    cls = pred.get('class', '')
+                    width_px = pred.get('width', 0)
+                    height_px = pred.get('height', 0)
+                    
+                    # Convert to millimeters
+                    width_mm = round(width_px * mm_per_pixel, 1)
+                    height_mm = round(height_px * mm_per_pixel, 1)
+                    diameter_mm = round((width_mm + height_mm) / 2, 1)
+                    
+                    bean_measurements.append({
+                        'class': cls,
+                        'width_mm': width_mm,
+                        'height_mm': height_mm,
+                        'diameter_mm': diameter_mm
+                    })
+                
+                print(f"Measured {len(bean_measurements)} beans")
+                
+            except Exception as e:
+                print(f"Bean measurement error: {e}")
         
-        # ===== FOREIGN MATTER (Your Custom Model) =====
+        # ===== STEP 3: SIZE-BASED TYPE DETECTION =====
+        if bean_measurements:
+            oval_count = 0
+            round_count = 0
+            diameters = [b['diameter_mm'] for b in bean_measurements]
+            
+            for b in bean_measurements:
+                w = b['width_mm']
+                h = b['height_mm']
+                if w > 0 and h > 0:
+                    aspect_ratio = max(w, h) / min(w, h)
+                    if aspect_ratio > 1.25:
+                        oval_count += 1
+                    else:
+                        round_count += 1
+            
+            total_typed = oval_count + round_count
+            if total_typed > 5:
+                if oval_count > round_count * 2:
+                    bean_type = "arabica"
+                elif round_count > oval_count * 2:
+                    bean_type = "robusta"
+                else:
+                    bean_type = "blend"
+            
+            # ===== STEP 4: SIZE-BASED GRADING =====
+            if diameters:
+                avg_size = sum(diameters) / len(diameters)
+                min_size = min(diameters)
+                max_size = max(diameters)
+                
+                # Uniformity calculation
+                variance = sum((d - avg_size) ** 2 for d in diameters) / len(diameters)
+                std_dev = variance ** 0.5
+                uniformity = round((1.0 - (std_dev / avg_size)) * 100) if avg_size > 0 else 0
+                
+                # Screen size grading (standard coffee screens in mm)
+                if avg_size >= 7.0:
+                    size_grade = 'AA'
+                elif avg_size >= 6.3:
+                    size_grade = 'A'
+                elif avg_size >= 5.5:
+                    size_grade = 'B'
+                elif avg_size >= 4.7:
+                    size_grade = 'C'
+                else:
+                    size_grade = 'D'
+                
+                print(f"Sizes: avg={avg_size:.1f}mm, range={min_size:.1f}-{max_size:.1f}mm")
+                print(f"Uniformity: {uniformity}%")
+                print(f"Size grade: {size_grade}")
+                print(f"Shape: oval={oval_count}, round={round_count}")
+        
+        # ===== STEP 5: DEFECT DETECTION (your custom model) =====
         try:
             project = workspace.project("my-coffee-defects")
             version = project.version(2)
-            predictions = version.model.predict(temp_path, confidence=0).json()
+            defect_predictions = version.model.predict(temp_path, confidence=1).json()
             
-            print(f"=== FOREIGN MATTER DEBUG ===")
-            print(f"Total predictions: {len(predictions.get('predictions', []))}")
-            
-            # Print EVERY detection with confidence
             all_counts = {}
-            for pred in predictions.get('predictions', []):
-                cls = pred.get('class', '')
-                conf = pred.get('confidence', 0)
-                
-                # Convert to lowercase for matching
-                cls_lower = cls.lower()
-                
-                print(f"  Class: {cls} (lower: {cls_lower}) | Confidence: {conf:.4f}")
-                
-                if cls_lower == 'background':
+            for pred in defect_predictions.get('predictions', []):
+                cls = pred.get('class', '').lower()
+                if cls == 'background':
                     continue
-                    
-                if cls_lower not in all_counts:
-                    all_counts[cls_lower] = 0
-                all_counts[cls_lower] += 1
+                if cls not in all_counts:
+                    all_counts[cls] = 0
+                all_counts[cls] += 1
             
-            print(f"All counts (non-background): {all_counts}")
+            print(f"Defects found: {all_counts}")
             
-            # Critical defects - try multiple name formats
+            # Critical defects
             critical_defects = [
-                'foreign_matter', 'foreign matter', 'foreign_matter', 'Foreign_matter',
-                'full_black', 'full black', 'Full_black',
-                'fungus_damage', 'fungus damage', 'Fungus_damage',
-                'severe_insect_damage', 'severe insect damage', 'Severe_insect_damage',
-                'broken', 'Broken'
+                'foreign_matter', 'foreign matter',
+                'full_black', 'full black',
+                'fungus_damage', 'fungus damage',
+                'severe_insect_damage', 'severe insect damage',
+                'broken'
             ]
             
             # Minor defects
             minor_defects = [
-                'parchment', 'Parchment',
-                'shell', 'Shell',
-                'slight_insect_damage', 'slight insect damage', 'Slight_insect_damage',
-                'immature', 'Immature'
+                'parchment', 'shell',
+                'slight_insect_damage', 'slight insect damage',
+                'immature'
             ]
             
             critical_counts = {}
@@ -378,11 +459,8 @@ def esp32_analysis_api(request):
             for cls in critical_defects:
                 count = all_counts.get(cls, 0)
                 if count > 0:
-                    # Use simplified name
-                    simple_name = cls.lower().replace(' ', '_')[:20]
-                    if simple_name not in critical_counts:
-                        critical_counts[simple_name] = 0
-                    critical_counts[simple_name] += count
+                    simple = cls.lower().replace(' ', '_')[:20]
+                    critical_counts[simple] = count
                     total_critical += count
             
             minor_counts = {}
@@ -390,77 +468,83 @@ def esp32_analysis_api(request):
             for cls in minor_defects:
                 count = all_counts.get(cls, 0)
                 if count > 0:
-                    simple_name = cls.lower().replace(' ', '_')[:20]
-                    if simple_name not in minor_counts:
-                        minor_counts[simple_name] = 0
-                    minor_counts[simple_name] += count
+                    simple = cls.lower().replace(' ', '_')[:20]
+                    minor_counts[simple] = count
                     total_minor += count
             
-            total_objects = sum(all_counts.values())
+            total_defect_objects = sum(all_counts.values())
             
-            print(f"Critical counts: {critical_counts} (total: {total_critical})")
-            print(f"Minor counts: {minor_counts} (total: {total_minor})")
-            print(f"Total objects: {total_objects}")
-            
-            # In the foreign matter section, replace the percentage calculation:
-
+            # Build foreign matter result
             if critical_counts or minor_counts:
                 parts = []
                 for cls, count in critical_counts.items():
                     parts.append(f"{cls}:{count}")
-                
                 if minor_counts:
                     parts.append(f"minor:{total_minor}")
-                
                 foreign = ", ".join(parts[:4])
                 
-                # Don't show percentage if we can't calculate it properly
-                # Only show percentage if there are non-critical objects too
-                if total_objects > total_critical and total_objects > 0:
-                    pct = (total_critical * 100) // total_objects
-                    foreign += f"({pct}%)"
-
-            print(f"Foreign result: {foreign}")
-            print(f"=== END DEBUG ===")
-            
-        except Exception as e:
-            print(f"Foreign error: {traceback.format_exc()}")
-            foreign = "Error"
-
-
-        # ===== BEAN TYPE (Arabica/Robusta only - map liberica to arabica) =====
-        try:
-            project = workspace.project("coffee-bean-type-8i4hd")
-            version = project.version(1)
-            predictions = version.model.predict(temp_path, confidence=20).json()
-            
-            type_counts = {}
-            for pred in predictions.get('predictions', []):
-                cls = pred.get('class', '').lower()
-                if cls not in type_counts:
-                    type_counts[cls] = 0
-                type_counts[cls] += 1
-            
-            arabica_count = type_counts.get('arabica', 0)
-            robusta_count = type_counts.get('robusta', 0)
-            liberica_count = type_counts.get('liberica', 0)
-            
-            # Map liberica to arabica (they look similar)
-            arabica_count += liberica_count
-            
-            if arabica_count >= robusta_count:
-                bean_type = "arabica"
+                if total_defect_objects > 0:
+                    defect_pct = (total_critical * 100) // total_defect_objects
+                    foreign += f"({defect_pct}%)"
             else:
-                bean_type = "robusta"
+                foreign = "None"
+                defect_pct = 0
             
-            print(f"Type counts: {type_counts}")
-            print(f"Type result: {bean_type}")
+            # ===== STEP 6: COMBINED FINAL GRADE =====
+            if total_defect_objects > 0:
+                # Defect-based grade
+                if defect_pct <= 5:
+                    defect_grade = 'A'
+                elif defect_pct <= 15:
+                    defect_grade = 'B'
+                elif defect_pct <= 30:
+                    defect_grade = 'C'
+                else:
+                    defect_grade = 'D'
+                
+                # Combine with size grade
+                if size_grade != '?':
+                    grades_order = ['AA', 'A', 'B', 'C', 'D']
+                    defect_idx = grades_order.index(defect_grade) if defect_grade in grades_order else 1
+                    size_idx = grades_order.index(size_grade) if size_grade in grades_order else 1
+                    
+                    # Take the lower of the two grades
+                    final_idx = max(defect_idx, size_idx)
+                    grade = grades_order[final_idx]
+                    
+                    print(f"Defect grade: {defect_grade}, Size grade: {size_grade}, Final: {grade}")
+                else:
+                    grade = defect_grade
+            else:
+                grade = 'A' if size_grade == '?' else size_grade
+                if grade == '?':
+                    grade = 'A'
             
         except Exception as e:
-            print(f"Type error: {e}")
-            bean_type = "arabica"
+            print(f"Defect detection error: {traceback.format_exc()}")
+            foreign = "Error"
         
-        # Build response
+        # ===== FALLBACK TYPE DETECTION =====
+        if bean_type == '?':
+            try:
+                project = workspace.project("coffee-bean-type-8i4hd")
+                version = project.version(1)
+                type_predictions = version.model.predict(temp_path, confidence=20).json()
+                
+                type_counts = {}
+                for pred in type_predictions.get('predictions', []):
+                    cls = pred.get('class', '').lower()
+                    type_counts[cls] = type_counts.get(cls, 0) + 1
+                
+                arabica_count = type_counts.get('arabica', 0) + type_counts.get('liberica', 0)
+                robusta_count = type_counts.get('robusta', 0)
+                
+                bean_type = "arabica" if arabica_count >= robusta_count else "robusta"
+                print(f"Model-based type: {bean_type}")
+            except:
+                bean_type = "arabica"
+        
+        # ===== BUILD RESPONSE =====
         lines = [
             f"Foreign: {foreign}",
             f"Grade: Grade {grade}",
@@ -471,7 +555,7 @@ def esp32_analysis_api(request):
         led_state = "green"
         if foreign != "None":
             led_state = "red"
-        elif grade in ['C', 'D', 'E']:
+        elif grade in ['C', 'D']:
             led_state = "yellow"
         
         return JsonResponse({
@@ -486,7 +570,6 @@ def esp32_analysis_api(request):
             'lines': ['ERROR', str(e)[:30], '================'],
             'led_state': 'red'
         }, status=500)
-
 
 @csrf_exempt
 def device_status_api(request):
