@@ -363,7 +363,8 @@ def esp32_analysis_api(request):
         print("-"*40)
         if mm_per_pixel:
             try:
-                project = workspace.project("coffee-bean-quality")
+                # project = workspace.project("coffee-bean-quality")
+                project = workspace.project("coffee-bean-quality-jvz1r")
                 version = project.version(1)
                 quality_predictions = version.model.predict(temp_path, confidence=20).json()
                 
