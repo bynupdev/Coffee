@@ -722,6 +722,7 @@ def esp32_analysis_api(request):
 
 
         # ===== STEP 5: SIZE-BASED GRADING (type-specific) =====
+        # ===== STEP 5: SIZE-BASED GRADING (type-specific) =====
         print("\n" + "-"*40)
         print("STEP 5: SIZE-BASED GRADING")
         print("-"*40)
@@ -729,39 +730,59 @@ def esp32_analysis_api(request):
         if bean_measurements:
             diameters = [b['diameter_mm'] for b in bean_measurements]
             avg_size = sum(diameters) / len(diameters)
+            min_size = min(diameters)
+            max_size = max(diameters)
             
-            print(f"  Avg bean size: {avg_size:.1f}mm")
+            variance = sum((d - avg_size) ** 2 for d in diameters) / len(diameters)
+            std_dev = variance ** 0.5
+            uniformity = round((1.0 - (std_dev / avg_size)) * 100) if avg_size > 0 else 0
+            
+            print(f"  Avg bean size: {avg_size:.1f}mm | Range: {min_size:.1f}-{max_size:.1f}mm")
+            print(f"  Uniformity: {uniformity}%")
             print(f"  Bean type: {detected_bean_type}")
             
-            # Type-specific grading
+            # ===== TYPE-SPECIFIC SIZE GRADING =====
             if detected_bean_type == "arabica":
+                # Arabica: 8-12mm expected, can achieve AA
                 print(f"  Arabica standard: 8-12mm")
                 if avg_size >= 10.0:
                     size_grade = 'AA'
+                    print(f"    {avg_size:.1f}mm >= 10.0mm → AA (Premium)")
                 elif avg_size >= 9.0:
                     size_grade = 'A'
+                    print(f"    {avg_size:.1f}mm >= 9.0mm → A (Large)")
                 elif avg_size >= 8.0:
                     size_grade = 'B'
+                    print(f"    {avg_size:.1f}mm >= 8.0mm → B (Standard)")
                 elif avg_size >= 6.5:
                     size_grade = 'C'
+                    print(f"    {avg_size:.1f}mm >= 6.5mm → C (Small)")
                 else:
                     size_grade = 'D'
+                    print(f"    {avg_size:.1f}mm < 6.5mm → D (Undersized)")
             
             elif detected_bean_type == "robusta":
+                # Robusta: 5-8mm expected, max grade is A (naturally smaller)
                 print(f"  Robusta standard: 5-8mm")
-                if avg_size >= 7.5:
-                    size_grade = 'AA'
-                elif avg_size >= 7.0:
+                if avg_size >= 8.0:
                     size_grade = 'A'
-                elif avg_size >= 6.0:
+                    print(f"    {avg_size:.1f}mm >= 8.0mm → A (Large Robusta)")
+                elif avg_size >= 7.0:
                     size_grade = 'B'
-                elif avg_size >= 5.0:
+                    print(f"    {avg_size:.1f}mm >= 7.0mm → B (Good)")
+                elif avg_size >= 6.0:
                     size_grade = 'C'
+                    print(f"    {avg_size:.1f}mm >= 6.0mm → C (Standard)")
+                elif avg_size >= 5.0:
+                    size_grade = 'D'
+                    print(f"    {avg_size:.1f}mm >= 5.0mm → D (Small)")
                 else:
                     size_grade = 'D'
+                    print(f"    {avg_size:.1f}mm < 5.0mm → D (Reject)")
             
             else:
                 # Generic fallback
+                print(f"  Generic grading:")
                 if avg_size >= 7.0:
                     size_grade = 'AA'
                 elif avg_size >= 6.3:
@@ -772,23 +793,42 @@ def esp32_analysis_api(request):
                     size_grade = 'C'
                 else:
                     size_grade = 'D'
+                print(f"    {size_grade}")
             
-            print(f"  Size grade: {size_grade}")
+            print(f"  Size grade (before defects): {size_grade}")
+            print(f"  Defect %: {defect_pct}%")
             
-            # Defect penalty
+            # ===== DEFECT PENALTY =====
             grades_order = ['AA', 'A', 'B', 'C', 'D']
             size_idx = grades_order.index(size_grade)
             
             if defect_pct > 30:
                 final_idx = min(size_idx + 2, 4)
+                penalty = "DOWN 2 (heavy defects)"
             elif defect_pct > 15:
                 final_idx = min(size_idx + 1, 4)
+                penalty = "DOWN 1 (moderate defects)"
             else:
                 final_idx = size_idx
+                penalty = "NONE (clean sample)"
             
             grade = grades_order[final_idx]
-            print(f"  ✅ FINAL GRADE: {grade}")
-
+            
+            print(f"  Penalty: {penalty}")
+            print(f"  ✅ FINAL GRADE: {grade} ({detected_bean_type})")
+            
+        else:
+            # Fallback to defect-only grading
+            print(f"  ⚠️ No size data, using defect-only grading")
+            if defect_pct <= 5:
+                grade = 'A'
+            elif defect_pct <= 15:
+                grade = 'B'
+            elif defect_pct <= 30:
+                grade = 'C'
+            else:
+                grade = 'D'
+            print(f"  ✅ FALLBACK GRADE: {grade}")
 
         # ===== BUILD FINAL RESPONSE =====
         print("\n" + "="*60)
