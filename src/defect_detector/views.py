@@ -545,78 +545,93 @@ def esp32_analysis_api(request):
             
         except Exception as e:
             print(f"  ❌ DEFECT ERROR: {e}")
+
         
-        # ===== STEP 4: SIZE-BASED GRADING =====
+
+        # ===== STEP 4: BEAN TYPE DETECTION (with size-based logic) =====
         print("\n" + "-"*40)
-        print("STEP 4: SIZE-BASED GRADING")
-        print("-"*40)
-        
-        if bean_measurements:
-            diameters = [b['diameter_mm'] for b in bean_measurements]
-            avg_size = sum(diameters) / len(diameters)
-            
-            # Industry standard screen sizes
-            if avg_size >= 7.0:
-                size_grade = 'AA'
-            elif avg_size >= 6.3:
-                size_grade = 'A'
-            elif avg_size >= 5.5:
-                size_grade = 'B'
-            elif avg_size >= 4.7:
-                size_grade = 'C'
-            else:
-                size_grade = 'D'
-            
-            print(f"  Avg bean size: {avg_size:.1f}mm")
-            print(f"  Size grade (before defects): {size_grade}")
-            print(f"  Defect %: {defect_pct}%")
-            
-            # Defect penalty
-            grades_order = ['AA', 'A', 'B', 'C', 'D']
-            size_idx = grades_order.index(size_grade)
-            
-            if defect_pct > 30:
-                # Heavy defects: downgrade 2 levels
-                final_idx = min(size_idx + 2, 4)
-                penalty = "DOWN 2"
-            elif defect_pct > 15:
-                # Moderate defects: downgrade 1 level
-                final_idx = min(size_idx + 1, 4)
-                penalty = "DOWN 1"
-            else:
-                # Few defects: keep size grade
-                final_idx = size_idx
-                penalty = "NONE"
-            
-            grade = grades_order[final_idx]
-            
-            print(f"  Penalty: {penalty}")
-            print(f"  ✅ FINAL GRADE: {grade}")
-        else:
-            # Fallback to defect-only grading
-            print(f"  ⚠️ No size data, using defect-only grading")
-            if defect_pct <= 5:
-                grade = 'A'
-            elif defect_pct <= 15:
-                grade = 'B'
-            elif defect_pct <= 30:
-                grade = 'C'
-            else:
-                grade = 'D'
-            print(f"  ✅ FALLBACK GRADE: {grade}")
-        
-        # ===== STEP 5: BEAN TYPE DETECTION =====
-        # ===== STEP 5: BEAN TYPE DETECTION =====
-        print("\n" + "-"*40)
-        print("STEP 5: BEAN TYPE DETECTION")
+        print("STEP 4: BEAN TYPE DETECTION")
         print("-"*40)
 
-        # Constants for coordinate correction
         ORIGINAL_WIDTH = 800
         ORIGINAL_HEIGHT = 600
         QUALITY_MODEL_SIZE = 640
 
-        # METHOD 1: Shape-based detection (from bean measurements)
+        # METHOD 1: Size-based detection (MOST RELIABLE)
+        size_type = "?"
+        if bean_measurements and len(bean_measurements) > 5:
+            diameters = []
+            for b in bean_measurements:
+                w_px = b.get('width_px', 0)
+                h_px = b.get('height_px', 0)
+                if w_px > 0 and h_px > 0:
+                    d_mm = b['diameter_mm']
+                    diameters.append(d_mm)
+            
+            if diameters:
+                avg_diameter = sum(diameters) / len(diameters)
+                min_diameter = min(diameters)
+                max_diameter = max(diameters)
+                
+                print(f"  [SIZE] Corrected diameters: avg={avg_diameter:.1f}mm, min={min_diameter:.1f}mm, max={max_diameter:.1f}mm")
+                print(f"  [SIZE] Arabica range: 8-12mm | Robusta range: 5-8mm")
+                
+                # Count beans in each size range
+                arabica_range = 0   # 8-12mm
+                robusta_range = 0   # 5-8mm
+                overlap_range = 0   # 7-9mm (could be either)
+                too_small = 0       # <5mm
+                too_large = 0       # >12mm
+                
+                for d in diameters:
+                    if d > 12.0:
+                        too_large += 1
+                    elif d >= 9.0:
+                        arabica_range += 1  # Definitely Arabica (9-12mm)
+                    elif d >= 8.0:
+                        overlap_range += 1  # Could be large Robusta or small Arabica
+                    elif d >= 5.0:
+                        robusta_range += 1  # Definitely Robusta (5-8mm)
+                    else:
+                        too_small += 1
+                
+                total_classified = arabica_range + robusta_range + overlap_range
+                
+                print(f"  [SIZE] Arabica range (9-12mm): {arabica_range} beans")
+                print(f"  [SIZE] Robusta range (5-8mm): {robusta_range} beans")
+                print(f"  [SIZE] Overlap range (8-9mm): {overlap_range} beans")
+                print(f"  [SIZE] Too large (>12mm): {too_large} beans")
+                print(f"  [SIZE] Too small (<5mm): {too_small} beans")
+                
+                if total_classified > 0:
+                    arabica_pct = (arabica_range * 100) // total_classified
+                    robusta_pct = (robusta_range * 100) // total_classified
+                    
+                    # Decision logic
+                    if arabica_range > robusta_range * 2:
+                        size_type = "arabica"
+                        print(f"  [SIZE] Clear Arabica (mostly 9-12mm)")
+                    elif robusta_range > arabica_range * 2:
+                        size_type = "robusta"
+                        print(f"  [SIZE] Clear Robusta (mostly 5-8mm)")
+                    elif overlap_range > arabica_range and overlap_range > robusta_range:
+                        # Beans in overlap zone - check average
+                        if avg_diameter > 8.5:
+                            size_type = "arabica"
+                            print(f"  [SIZE] Overlap zone, avg {avg_diameter:.1f}mm → Arabica")
+                        else:
+                            size_type = "robusta"
+                            print(f"  [SIZE] Overlap zone, avg {avg_diameter:.1f}mm → Robusta")
+                    elif arabica_range > robusta_range:
+                        size_type = "arabica"
+                    else:
+                        size_type = "robusta"
+                    
+                    print(f"  [SIZE] Result: {size_type}")
+        else:
+            print(f"  [SIZE] Not enough beans for size analysis")
+
+        # METHOD 2: Shape-based detection
         shape_type = "?"
         oval_count = 0
         round_count = 0
@@ -640,17 +655,13 @@ def esp32_analysis_api(request):
                 
                 if oval_pct > 70:
                     shape_type = "arabica"
-                    print(f"  [SHAPE] Result: arabica (mostly oval)")
                 elif oval_pct < 30:
                     shape_type = "robusta"
-                    print(f"  [SHAPE] Result: robusta (mostly round)")
                 else:
                     shape_type = "blend"
-                    print(f"  [SHAPE] Result: blend (mixed shapes)")
-        else:
-            print(f"  [SHAPE] Not enough beans (need >5, have {len(bean_measurements) if bean_measurements else 0})")
+                print(f"  [SHAPE] Result: {shape_type}")
 
-        # METHOD 2: Public model detection
+        # METHOD 3: Public model detection
         model_type = "?"
         try:
             project = workspace.project("coffee-bean-type-8i4hd")
@@ -663,88 +674,30 @@ def esp32_analysis_api(request):
             type_counts = {}
             for pred in preds:
                 cls = pred.get('class', '').lower()
-                conf = pred.get('confidence', 0)
                 if cls not in type_counts:
-                    type_counts[cls] = {'count': 0, 'total_conf': 0, 'max_conf': 0}
-                type_counts[cls]['count'] += 1
-                type_counts[cls]['total_conf'] += conf
-                if conf > type_counts[cls]['max_conf']:
-                    type_counts[cls]['max_conf'] = conf
+                    type_counts[cls] = 0
+                type_counts[cls] += 1
             
-            for cls, data in type_counts.items():
-                avg_conf = (data['total_conf'] / data['count']) * 100 if data['count'] > 0 else 0
-                max_conf = data['max_conf'] * 100
-                print(f"  [MODEL] {cls}: {data['count']} preds, avg:{avg_conf:.0f}%, max:{max_conf:.0f}%")
+            print(f"  [MODEL] Counts - {dict(type_counts)}")
             
-            arabica_count = type_counts.get('arabica', {}).get('count', 0)
-            robusta_count = type_counts.get('robusta', {}).get('count', 0)
-            liberica_count = type_counts.get('liberica', {}).get('count', 0)
+            arabica_count = type_counts.get('arabica', 0) + type_counts.get('liberica', 0)
+            robusta_count = type_counts.get('robusta', 0)
             
-            print(f"  [MODEL] Raw - arabica:{arabica_count}, robusta:{robusta_count}, liberica:{liberica_count}")
-            
-            if arabica_count > robusta_count and arabica_count > liberica_count:
-                model_type = "arabica"
-            elif robusta_count > arabica_count and robusta_count > liberica_count:
-                model_type = "robusta"
-            elif liberica_count > arabica_count and liberica_count > robusta_count:
-                model_type = "arabica"
-            else:
-                model_type = "arabica"
-            
+            model_type = "arabica" if arabica_count >= robusta_count else "robusta"
             print(f"  [MODEL] Result: {model_type}")
             
         except Exception as e:
             print(f"  [MODEL] Error: {e}")
 
-        # METHOD 3: Size-based detection (with coordinate correction)
-        size_type = "?"
-        if bean_measurements and len(bean_measurements) > 5:
-            diameters = []
-            for b in bean_measurements:
-                # Get raw pixel dimensions from quality model
-                w_stretched = b.get('width_px', 0)
-                h_stretched = b.get('height_px', 0)
-                
-                if w_stretched > 0 and h_stretched > 0:
-                    # Convert from 640x640 back to 800x600
-                    w_px = w_stretched * (ORIGINAL_WIDTH / QUALITY_MODEL_SIZE)
-                    h_px = h_stretched * (ORIGINAL_HEIGHT / QUALITY_MODEL_SIZE)
-                    
-                    w_mm = w_px * mm_per_pixel
-                    h_mm = h_px * mm_per_pixel
-                    d_mm = (w_mm + h_mm) / 2
-                    diameters.append(d_mm)
-            
-            if diameters:
-                avg_diameter = sum(diameters) / len(diameters)
-                min_diameter = min(diameters)
-                max_diameter = max(diameters)
-                
-                print(f"  [SIZE] CORRECTED diameters: avg={avg_diameter:.1f}mm, min={min_diameter:.1f}mm, max={max_diameter:.1f}mm")
-                print(f"  [SIZE] Reference: Arabica 5.5-8.0mm | Robusta 4.5-6.5mm")
-                
-                if avg_diameter < 5.8:
-                    size_type = "robusta"
-                    print(f"  [SIZE] Small beans (<5.8mm) → Robusta")
-                elif avg_diameter > 6.8:
-                    size_type = "arabica"
-                    print(f"  [SIZE] Large beans (>6.8mm) → Arabica")
-                else:
-                    round_ratio = round_count / len(bean_measurements) if round_count > 0 else 0.5
-                    if round_ratio > 0.6:
-                        size_type = "robusta"
-                        print(f"  [SIZE] Borderline size + mostly round → Robusta")
-                    else:
-                        size_type = "arabica"
-                        print(f"  [SIZE] Borderline size + oval → Arabica")
-        else:
-            print(f"  [SIZE] Not enough beans for size analysis")
-
         # ===== FINAL DECISION =====
-        print(f"\n  [FINAL] Shape: {shape_type} | Model: {model_type} | Size: {size_type}")
+        print(f"\n  [FINAL] Size: {size_type} | Shape: {shape_type} | Model: {model_type}")
 
+        # Voting with size as tiebreaker
         votes_arabica = 0
         votes_robusta = 0
+
+        if size_type == "arabica": votes_arabica += 2  # Size gets 2 votes (most reliable)
+        elif size_type == "robusta": votes_robusta += 2
 
         if shape_type == "arabica": votes_arabica += 1
         elif shape_type == "robusta": votes_robusta += 1
@@ -752,30 +705,91 @@ def esp32_analysis_api(request):
         if model_type == "arabica": votes_arabica += 1
         elif model_type == "robusta": votes_robusta += 1
 
-        if size_type == "arabica": votes_arabica += 1
-        elif size_type == "robusta": votes_robusta += 1
+        print(f"  [VOTE] Arabica: {votes_arabica}, Robusta: {votes_robusta} (Size=2 votes, Shape=1, Model=1)")
 
-        print(f"  [VOTE] Arabica: {votes_arabica}, Robusta: {votes_robusta}")
-
-        if votes_arabica >= 2:
+        if votes_arabica > votes_robusta:
             bean_type = "arabica"
-            print(f"  [VOTE] Majority Arabica")
-        elif votes_robusta >= 2:
+        elif votes_robusta > votes_arabica:
             bean_type = "robusta"
-            print(f"  [VOTE] Majority Robusta")
         else:
-            # Tie - trust shape (most reliable for your setup)
-            if shape_type == "robusta":
-                bean_type = "robusta"
-            elif oval_count > 0 or round_count > 0:
-                oval_pct_final = (oval_count * 100) // (oval_count + round_count)
-                bean_type = "robusta" if oval_pct_final < 50 else "arabica"
-            else:
-                bean_type = "arabica"
-            print(f"  [VOTE] Tie - using shape: {bean_type}")
+            # Tie - trust size range analysis
+            bean_type = size_type if size_type != "?" else "arabica"
 
         print(f"  ✅ FINAL TYPE: {bean_type}")
-        
+
+        # Store for grading step
+        detected_bean_type = bean_type
+
+
+        # ===== STEP 5: SIZE-BASED GRADING (type-specific) =====
+        print("\n" + "-"*40)
+        print("STEP 5: SIZE-BASED GRADING")
+        print("-"*40)
+
+        if bean_measurements:
+            diameters = [b['diameter_mm'] for b in bean_measurements]
+            avg_size = sum(diameters) / len(diameters)
+            
+            print(f"  Avg bean size: {avg_size:.1f}mm")
+            print(f"  Bean type: {detected_bean_type}")
+            
+            # Type-specific grading
+            if detected_bean_type == "arabica":
+                print(f"  Arabica standard: 8-12mm")
+                if avg_size >= 10.0:
+                    size_grade = 'AA'
+                elif avg_size >= 9.0:
+                    size_grade = 'A'
+                elif avg_size >= 8.0:
+                    size_grade = 'B'
+                elif avg_size >= 6.5:
+                    size_grade = 'C'
+                else:
+                    size_grade = 'D'
+            
+            elif detected_bean_type == "robusta":
+                print(f"  Robusta standard: 5-8mm")
+                if avg_size >= 7.5:
+                    size_grade = 'AA'
+                elif avg_size >= 7.0:
+                    size_grade = 'A'
+                elif avg_size >= 6.0:
+                    size_grade = 'B'
+                elif avg_size >= 5.0:
+                    size_grade = 'C'
+                else:
+                    size_grade = 'D'
+            
+            else:
+                # Generic fallback
+                if avg_size >= 7.0:
+                    size_grade = 'AA'
+                elif avg_size >= 6.3:
+                    size_grade = 'A'
+                elif avg_size >= 5.5:
+                    size_grade = 'B'
+                elif avg_size >= 4.7:
+                    size_grade = 'C'
+                else:
+                    size_grade = 'D'
+            
+            print(f"  Size grade: {size_grade}")
+            
+            # Defect penalty
+            grades_order = ['AA', 'A', 'B', 'C', 'D']
+            size_idx = grades_order.index(size_grade)
+            
+            if defect_pct > 30:
+                final_idx = min(size_idx + 2, 4)
+            elif defect_pct > 15:
+                final_idx = min(size_idx + 1, 4)
+            else:
+                final_idx = size_idx
+            
+            grade = grades_order[final_idx]
+            print(f"  ✅ FINAL GRADE: {grade}")
+
+
         # ===== BUILD FINAL RESPONSE =====
         print("\n" + "="*60)
         print("FINAL RESULT")
