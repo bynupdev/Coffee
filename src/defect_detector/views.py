@@ -550,30 +550,139 @@ def esp32_analysis_api(request):
             print(f"  ✅ FALLBACK GRADE: {grade}")
         
         # ===== STEP 5: BEAN TYPE DETECTION =====
+        # ===== STEP 5: BEAN TYPE DETECTION =====
         print("\n" + "-"*40)
-        print("STEP 5: BEAN TYPE")
+        print("STEP 5: BEAN TYPE DETECTION")
         print("-"*40)
+
+        # METHOD 1: Shape-based detection (from bean measurements)
+        shape_type = "?"
+        if bean_measurements and len(bean_measurements) > 5:
+            oval_count = 0
+            round_count = 0
+            
+            for b in bean_measurements:
+                w = b['width_mm']
+                h = b['height_mm']
+                if w > 0 and h > 0:
+                    aspect_ratio = max(w, h) / min(w, h)
+                    if aspect_ratio > 1.25:  # Elongated = Arabica
+                        oval_count += 1
+                    else:  # Round = Robusta
+                        round_count += 1
+            
+            total_typed = oval_count + round_count
+            if total_typed > 0:
+                oval_pct = (oval_count * 100) // total_typed
+                print(f"  [SHAPE] Oval beans: {oval_count} ({oval_pct}%)")
+                print(f"  [SHAPE] Round beans: {round_count} ({100 - oval_pct}%)")
+                
+                if oval_pct > 70:
+                    shape_type = "arabica"
+                elif oval_pct < 30:
+                    shape_type = "robusta"
+                else:
+                    shape_type = "blend"
+                print(f"  [SHAPE] Result: {shape_type}")
+        else:
+            print(f"  [SHAPE] Not enough beans for shape analysis (need >5, have {len(bean_measurements) if bean_measurements else 0})")
+
+        # METHOD 2: Public model detection
+        model_type = "?"
         try:
             project = workspace.project("coffee-bean-type-8i4hd")
             version = project.version(1)
-            type_predictions = version.model.predict(temp_path, confidence=20).json()
+            type_predictions = version.model.predict(temp_path, confidence=15).json()
+            
+            preds = type_predictions.get('predictions', [])
+            print(f"  [MODEL] Total predictions: {len(preds)}")
             
             type_counts = {}
-            for pred in type_predictions.get('predictions', []):
+            for pred in preds:
                 cls = pred.get('class', '').lower()
-                type_counts[cls] = type_counts.get(cls, 0) + 1
+                conf = pred.get('confidence', 0)
+                if cls not in type_counts:
+                    type_counts[cls] = {'count': 0, 'total_conf': 0}
+                type_counts[cls]['count'] += 1
+                type_counts[cls]['total_conf'] += conf
             
-            print(f"  Type counts: {type_counts}")
+            # Print detailed breakdown
+            for cls, data in type_counts.items():
+                avg_conf = (data['total_conf'] / data['count']) * 100 if data['count'] > 0 else 0
+                print(f"  [MODEL] {cls}: {data['count']} predictions, avg confidence: {avg_conf:.0f}%")
             
-            arabica_count = type_counts.get('arabica', 0) + type_counts.get('liberica', 0)
-            robusta_count = type_counts.get('robusta', 0)
+            arabica_count = type_counts.get('arabica', {}).get('count', 0)
+            robusta_count = type_counts.get('robusta', {}).get('count', 0)
+            liberica_count = type_counts.get('liberica', {}).get('count', 0)
             
-            bean_type = "arabica" if arabica_count >= robusta_count else "robusta"
-            print(f"  ✅ Type: {bean_type}")
+            print(f"  [MODEL] Raw counts - arabica:{arabica_count}, robusta:{robusta_count}, liberica:{liberica_count}")
+            
+            # Liberica looks like Arabica - merge them
+            arabica_total = arabica_count + liberica_count
+            
+            if arabica_total > robusta_count:
+                model_type = "arabica"
+            elif robusta_count > arabica_total:
+                model_type = "robusta"
+            else:
+                model_type = "arabica"  # Default
+            
+            print(f"  [MODEL] Merged: arabica+liberica={arabica_total} vs robusta={robusta_count}")
+            print(f"  [MODEL] Result: {model_type}")
             
         except Exception as e:
-            print(f"  ⚠️ Type error: {e}, defaulting to arabica")
+            print(f"  [MODEL] Error: {e}")
+
+        # METHOD 3: Size-based detection
+        size_type = "?"
+        if bean_measurements and len(bean_measurements) > 5:
+            diameters = [b['diameter_mm'] for b in bean_measurements]
+            avg_diameter = sum(diameters) / len(diameters)
+            
+            print(f"  [SIZE] Average bean diameter: {avg_diameter:.1f}mm")
+            print(f"  [SIZE] Arabica typically: 5.5-8.0mm (larger)")
+            print(f"  [SIZE] Robusta typically: 4.5-6.5mm (smaller)")
+            
+            if avg_diameter > 6.5:
+                size_type = "arabica"
+                print(f"  [SIZE] Large beans → likely Arabica")
+            elif avg_diameter < 5.5:
+                size_type = "robusta"
+                print(f"  [SIZE] Small beans → likely Robusta")
+            else:
+                size_type = "arabica"  # Borderline, default to arabica
+                print(f"  [SIZE] Borderline size → defaulting to arabica")
+        else:
+            print(f"  [SIZE] Not enough beans for size analysis")
+
+        # ===== FINAL DECISION =====
+        print(f"\n  [FINAL] Shape: {shape_type} | Model: {model_type} | Size: {size_type}")
+
+        # Voting: 2 out of 3 agreement
+        votes_arabica = 0
+        votes_robusta = 0
+
+        if shape_type == "arabica": votes_arabica += 1
+        elif shape_type == "robusta": votes_robusta += 1
+
+        if model_type == "arabica": votes_arabica += 1
+        elif model_type == "robusta": votes_robusta += 1
+
+        if size_type == "arabica": votes_arabica += 1
+        elif size_type == "robusta": votes_robusta += 1
+
+        print(f"  [VOTE] Arabica: {votes_arabica}, Robusta: {votes_robusta}")
+
+        if votes_arabica >= 2:
             bean_type = "arabica"
+        elif votes_robusta >= 2:
+            bean_type = "robusta"
+        else:
+            # Tie or insufficient data - use model as tiebreaker
+            bean_type = model_type if model_type != "?" else "arabica"
+            print(f"  [VOTE] Tie - using model decision: {bean_type}")
+
+        print(f"  ✅ FINAL TYPE: {bean_type}")
         
         # ===== BUILD FINAL RESPONSE =====
         print("\n" + "="*60)
