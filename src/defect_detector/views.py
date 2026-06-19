@@ -555,6 +555,11 @@ def esp32_analysis_api(request):
         print("STEP 5: BEAN TYPE DETECTION")
         print("-"*40)
 
+        # Constants for coordinate correction
+        ORIGINAL_WIDTH = 800
+        ORIGINAL_HEIGHT = 600
+        QUALITY_MODEL_SIZE = 640  # Quality model resized to 640x640
+
         # METHOD 1: Shape-based detection (from bean measurements)
         shape_type = "?"
         if bean_measurements and len(bean_measurements) > 5:
@@ -579,11 +584,13 @@ def esp32_analysis_api(request):
                 
                 if oval_pct > 70:
                     shape_type = "arabica"
+                    print(f"  [SHAPE] Result: arabica (mostly oval)")
                 elif oval_pct < 30:
                     shape_type = "robusta"
+                    print(f"  [SHAPE] Result: robusta (mostly round)")
                 else:
                     shape_type = "blend"
-                print(f"  [SHAPE] Result: {shape_type}")
+                    print(f"  [SHAPE] Result: blend (mixed shapes)")
         else:
             print(f"  [SHAPE] Not enough beans for shape analysis (need >5, have {len(bean_measurements) if bean_measurements else 0})")
 
@@ -602,32 +609,37 @@ def esp32_analysis_api(request):
                 cls = pred.get('class', '').lower()
                 conf = pred.get('confidence', 0)
                 if cls not in type_counts:
-                    type_counts[cls] = {'count': 0, 'total_conf': 0}
+                    type_counts[cls] = {'count': 0, 'total_conf': 0, 'max_conf': 0}
                 type_counts[cls]['count'] += 1
                 type_counts[cls]['total_conf'] += conf
+                if conf > type_counts[cls]['max_conf']:
+                    type_counts[cls]['max_conf'] = conf
             
             # Print detailed breakdown
             for cls, data in type_counts.items():
                 avg_conf = (data['total_conf'] / data['count']) * 100 if data['count'] > 0 else 0
-                print(f"  [MODEL] {cls}: {data['count']} predictions, avg confidence: {avg_conf:.0f}%")
+                max_conf = data['max_conf'] * 100
+                print(f"  [MODEL] {cls}: {data['count']} predictions, avg:{avg_conf:.0f}%, max:{max_conf:.0f}%")
             
             arabica_count = type_counts.get('arabica', {}).get('count', 0)
             robusta_count = type_counts.get('robusta', {}).get('count', 0)
             liberica_count = type_counts.get('liberica', {}).get('count', 0)
             
-            print(f"  [MODEL] Raw counts - arabica:{arabica_count}, robusta:{robusta_count}, liberica:{liberica_count}")
+            print(f"  [MODEL] Raw - arabica:{arabica_count}, robusta:{robusta_count}, liberica:{liberica_count}")
             
-            # Liberica looks like Arabica - merge them
-            arabica_total = arabica_count + liberica_count
-            
-            if arabica_total > robusta_count:
+            # Don't merge liberica with arabica anymore
+            # Compare arabica vs robusta directly, ignore liberica
+            if arabica_count > robusta_count and arabica_count > liberica_count:
                 model_type = "arabica"
-            elif robusta_count > arabica_total:
+            elif robusta_count > arabica_count and robusta_count > liberica_count:
                 model_type = "robusta"
+            elif liberica_count > arabica_count and liberica_count > robusta_count:
+                # Liberica is closer to Arabica in appearance
+                model_type = "arabica"
             else:
-                model_type = "arabica"  # Default
+                # Tie or unclear - use arabica as default
+                model_type = "arabica"
             
-            print(f"  [MODEL] Merged: arabica+liberica={arabica_total} vs robusta={robusta_count}")
             print(f"  [MODEL] Result: {model_type}")
             
         except Exception as e:
@@ -638,20 +650,30 @@ def esp32_analysis_api(request):
         if bean_measurements and len(bean_measurements) > 5:
             diameters = [b['diameter_mm'] for b in bean_measurements]
             avg_diameter = sum(diameters) / len(diameters)
+            min_diameter = min(diameters)
+            max_diameter = max(diameters)
             
-            print(f"  [SIZE] Average bean diameter: {avg_diameter:.1f}mm")
-            print(f"  [SIZE] Arabica typically: 5.5-8.0mm (larger)")
-            print(f"  [SIZE] Robusta typically: 4.5-6.5mm (smaller)")
+            print(f"  [SIZE] Bean diameters: avg={avg_diameter:.1f}mm, min={min_diameter:.1f}mm, max={max_diameter:.1f}mm")
+            print(f"  [SIZE] Reference: Arabica typically 5.5-8.0mm (larger, oval)")
+            print(f"  [SIZE] Reference: Robusta typically 4.5-6.5mm (smaller, round)")
             
-            if avg_diameter > 6.5:
-                size_type = "arabica"
-                print(f"  [SIZE] Large beans → likely Arabica")
-            elif avg_diameter < 5.5:
+            # Robusta beans are noticeably smaller
+            if avg_diameter < 5.8:
                 size_type = "robusta"
-                print(f"  [SIZE] Small beans → likely Robusta")
+                print(f"  [SIZE] Small beans (<5.8mm) → Robusta")
+            elif avg_diameter > 6.8:
+                size_type = "arabica"
+                print(f"  [SIZE] Large beans (>6.8mm) → Arabica")
             else:
-                size_type = "arabica"  # Borderline, default to arabica
-                print(f"  [SIZE] Borderline size → defaulting to arabica")
+                # Borderline - check if mostly round
+                if bean_measurements:
+                    round_ratio = round_count / len(bean_measurements) if 'round_count' in dir() else 0.5
+                    if round_ratio > 0.6:
+                        size_type = "robusta"
+                        print(f"  [SIZE] Borderline size + mostly round → Robusta")
+                    else:
+                        size_type = "arabica"
+                        print(f"  [SIZE] Borderline size + oval → Arabica")
         else:
             print(f"  [SIZE] Not enough beans for size analysis")
 
@@ -675,12 +697,14 @@ def esp32_analysis_api(request):
 
         if votes_arabica >= 2:
             bean_type = "arabica"
+            print(f"  [VOTE] Majority Arabica")
         elif votes_robusta >= 2:
             bean_type = "robusta"
+            print(f"  [VOTE] Majority Robusta")
         else:
-            # Tie or insufficient data - use model as tiebreaker
-            bean_type = model_type if model_type != "?" else "arabica"
-            print(f"  [VOTE] Tie - using model decision: {bean_type}")
+            # Tie - use shape as tiebreaker (most reliable)
+            bean_type = shape_type if shape_type != "?" else "arabica"
+            print(f"  [VOTE] Tie - using shape: {bean_type}")
 
         print(f"  ✅ FINAL TYPE: {bean_type}")
         
