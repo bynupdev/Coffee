@@ -358,11 +358,11 @@ def esp32_analysis_api(request):
             print(f"  ❌ COIN ERROR: {e}")
         
         # ===== STEP 2: BEAN MEASUREMENT =====
+        # ===== STEP 2: BEAN MEASUREMENT (with full pixel debug) =====
         print("\n" + "-"*40)
         print("STEP 2: BEAN MEASUREMENT")
         print("-"*40)
 
-        # Constants for coordinate correction
         ORIGINAL_WIDTH = 800
         ORIGINAL_HEIGHT = 600
         QUALITY_MODEL_SIZE = 640
@@ -376,16 +376,36 @@ def esp32_analysis_api(request):
                 preds = quality_predictions.get('predictions', [])
                 print(f"  Beans detected: {len(preds)}")
                 
-                for pred in preds:
+                # Store all pixel sizes for debugging
+                all_pixel_sizes = []
+                
+                for i, pred in enumerate(preds):
                     cls = pred.get('class', '')
                     w_stretched = pred.get('width', 0)
                     h_stretched = pred.get('height', 0)
                     
-                    # Convert from 640x640 stretched space back to 800x600 original
-                    w_px = w_stretched * (ORIGINAL_WIDTH / QUALITY_MODEL_SIZE)
-                    h_px = h_stretched * (ORIGINAL_HEIGHT / QUALITY_MODEL_SIZE)
+                    # Store pixel dimensions from model
+                    all_pixel_sizes.append({
+                        'index': i,
+                        'class': cls,
+                        'w_640': w_stretched,
+                        'h_640': h_stretched,
+                        'area_640': w_stretched * h_stretched
+                    })
                     
-                    # Convert to millimeters
+                    # Try BOTH correction directions to see which is right
+                    # Option A: multiply (previous approach)
+                    w_px_A = w_stretched * (ORIGINAL_WIDTH / QUALITY_MODEL_SIZE)
+                    h_px_A = h_stretched * (ORIGINAL_HEIGHT / QUALITY_MODEL_SIZE)
+                    
+                    # Option B: divide (reverse approach)
+                    w_px_B = w_stretched / (ORIGINAL_WIDTH / QUALITY_MODEL_SIZE)
+                    h_px_B = h_stretched / (ORIGINAL_HEIGHT / QUALITY_MODEL_SIZE)
+                    
+                    # Use Option B (dividing) and store
+                    w_px = w_px_B
+                    h_px = h_px_B
+                    
                     w_mm = round(w_px * mm_per_pixel, 1)
                     h_mm = round(h_px * mm_per_pixel, 1)
                     d_mm = round((w_mm + h_mm) / 2, 1)
@@ -401,6 +421,34 @@ def esp32_analysis_api(request):
                 
                 total_beans_in_sample = len(bean_measurements)
                 
+                # ===== DETAILED PIXEL DEBUG =====
+                print(f"\n  === COIN vs BEAN PIXEL SIZES ===")
+                print(f"  COIN: 80.5px in 640x640 = 22.0mm real")
+                print(f"  Scale: {mm_per_pixel:.4f} mm/pixel")
+                print(f"")
+                print(f"  BEAN PIXEL SIZES (in 640x640 space):")
+                print(f"  {'#':<4} {'Class':<15} {'W':<6} {'H':<6} {'Area':<8} {'W_mm':<8} {'H_mm':<8}")
+                print(f"  {'-'*60}")
+                
+                for b in all_pixel_sizes[:15]:  # Show first 15 beans
+                    bean_idx = b['index']
+                    w_mm_val = bean_measurements[bean_idx]['width_mm'] if bean_idx < len(bean_measurements) else 0
+                    h_mm_val = bean_measurements[bean_idx]['height_mm'] if bean_idx < len(bean_measurements) else 0
+                    print(f"  {b['index']:<4} {b['class']:<15} {b['w_640']:<6.0f} {b['h_640']:<6.0f} {b['area_640']:<8.0f} {w_mm_val:<8.1f} {h_mm_val:<8.1f}")
+                
+                if len(all_pixel_sizes) > 15:
+                    print(f"  ... and {len(all_pixel_sizes) - 15} more beans")
+                
+                # Calculate averages
+                avg_w_px = sum(b['w_640'] for b in all_pixel_sizes) / len(all_pixel_sizes)
+                avg_h_px = sum(b['h_640'] for b in all_pixel_sizes) / len(all_pixel_sizes)
+                avg_area = sum(b['area_640'] for b in all_pixel_sizes) / len(all_pixel_sizes)
+                
+                print(f"\n  AVERAGES (in 640x640 space):")
+                print(f"  Width: {avg_w_px:.1f}px | Height: {avg_h_px:.1f}px | Area: {avg_area:.0f}px²")
+                print(f"  Coin comparison: Beans are {avg_w_px/80.5*100:.0f}% of coin width")
+                print(f"  Expected: Beans should be ~25-35% of coin width (5-8mm vs 22mm)")
+                
                 if bean_measurements:
                     diameters = [b['diameter_mm'] for b in bean_measurements]
                     avg_size = round(sum(diameters) / len(diameters), 1)
@@ -411,16 +459,14 @@ def esp32_analysis_api(request):
                     std_dev = variance ** 0.5
                     uniformity = round((1.0 - (std_dev / avg_size)) * 100) if avg_size > 0 else 0
                     
-                    print(f"  📏 Avg: {avg_size}mm | Range: {min_size}-{max_size}mm")
+                    print(f"\n  📏 CORRECTED: Avg: {avg_size}mm | Range: {min_size}-{max_size}mm")
                     print(f"  📏 Uniformity: {uniformity}%")
-                else:
-                    print(f"  ⚠️ No beans measured")
                     
             except Exception as e:
                 print(f"  ❌ MEASUREMENT ERROR: {e}")
         else:
             print("  ⏭️ SKIPPED: No coin calibration available")
-        
+
         # ===== STEP 3: DEFECT DETECTION =====
         print("\n" + "-"*40)
         print("STEP 3: DEFECT DETECTION")
