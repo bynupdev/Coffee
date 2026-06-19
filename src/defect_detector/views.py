@@ -549,87 +549,54 @@ def esp32_analysis_api(request):
         
 
         # ===== STEP 4: BEAN TYPE DETECTION (with size-based logic) =====
+        # ===== STEP 4: BEAN TYPE DETECTION (with clear 8.0/8.1 boundary) =====
         print("\n" + "-"*40)
         print("STEP 4: BEAN TYPE DETECTION")
         print("-"*40)
 
-        ORIGINAL_WIDTH = 800
-        ORIGINAL_HEIGHT = 600
-        QUALITY_MODEL_SIZE = 640
-
         # METHOD 1: Size-based detection (MOST RELIABLE)
+        # Clear boundary: Robusta ≤ 8.0mm, Arabica ≥ 8.1mm
         size_type = "?"
         if bean_measurements and len(bean_measurements) > 5:
             diameters = []
             for b in bean_measurements:
-                w_px = b.get('width_px', 0)
-                h_px = b.get('height_px', 0)
-                if w_px > 0 and h_px > 0:
-                    d_mm = b['diameter_mm']
-                    diameters.append(d_mm)
+                d_mm = b['diameter_mm']
+                diameters.append(d_mm)
             
             if diameters:
                 avg_diameter = sum(diameters) / len(diameters)
                 min_diameter = min(diameters)
                 max_diameter = max(diameters)
                 
-                print(f"  [SIZE] Corrected diameters: avg={avg_diameter:.1f}mm, min={min_diameter:.1f}mm, max={max_diameter:.1f}mm")
-                print(f"  [SIZE] Arabica range: 8-12mm | Robusta range: 5-8mm")
-                
-                # Count beans in each size range
-                arabica_range = 0   # 8-12mm
-                robusta_range = 0   # 5-8mm
-                overlap_range = 0   # 7-9mm (could be either)
-                too_small = 0       # <5mm
-                too_large = 0       # >12mm
+                # Count beans with clear boundary
+                arabica_range = 0   # ≥ 8.1mm
+                robusta_range = 0   # ≤ 8.0mm
                 
                 for d in diameters:
-                    if d > 12.0:
-                        too_large += 1
-                    elif d >= 9.0:
-                        arabica_range += 1  # Definitely Arabica (9-12mm)
-                    elif d >= 8.0:
-                        overlap_range += 1  # Could be large Robusta or small Arabica
-                    elif d >= 5.0:
-                        robusta_range += 1  # Definitely Robusta (5-8mm)
+                    if d >= 8.1:
+                        arabica_range += 1
                     else:
-                        too_small += 1
+                        robusta_range += 1
                 
-                total_classified = arabica_range + robusta_range + overlap_range
+                total = arabica_range + robusta_range
                 
-                print(f"  [SIZE] Arabica range (9-12mm): {arabica_range} beans")
-                print(f"  [SIZE] Robusta range (5-8mm): {robusta_range} beans")
-                print(f"  [SIZE] Overlap range (8-9mm): {overlap_range} beans")
-                print(f"  [SIZE] Too large (>12mm): {too_large} beans")
-                print(f"  [SIZE] Too small (<5mm): {too_small} beans")
+                print(f"  [SIZE] Bean diameters: avg={avg_diameter:.1f}mm, min={min_diameter:.1f}mm, max={max_diameter:.1f}mm")
+                print(f"  [SIZE] Boundary: Robusta ≤ 8.0mm | Arabica ≥ 8.1mm")
+                print(f"  [SIZE] Arabica (≥8.1mm): {arabica_range} beans ({arabica_range*100//total if total>0 else 0}%)")
+                print(f"  [SIZE] Robusta (≤8.0mm): {robusta_range} beans ({robusta_range*100//total if total>0 else 0}%)")
                 
-                if total_classified > 0:
-                    arabica_pct = (arabica_range * 100) // total_classified
-                    robusta_pct = (robusta_range * 100) // total_classified
-                    
-                    # Decision logic
-                    if arabica_range > robusta_range * 2:
-                        size_type = "arabica"
-                        print(f"  [SIZE] Clear Arabica (mostly 9-12mm)")
-                    elif robusta_range > arabica_range * 2:
-                        size_type = "robusta"
-                        print(f"  [SIZE] Clear Robusta (mostly 5-8mm)")
-                    elif overlap_range > arabica_range and overlap_range > robusta_range:
-                        # Beans in overlap zone - check average
-                        if avg_diameter > 8.5:
-                            size_type = "arabica"
-                            print(f"  [SIZE] Overlap zone, avg {avg_diameter:.1f}mm → Arabica")
-                        else:
-                            size_type = "robusta"
-                            print(f"  [SIZE] Overlap zone, avg {avg_diameter:.1f}mm → Robusta")
-                    elif arabica_range > robusta_range:
-                        size_type = "arabica"
-                    else:
-                        size_type = "robusta"
-                    
-                    print(f"  [SIZE] Result: {size_type}")
+                if arabica_range > robusta_range:
+                    size_type = "arabica"
+                    print(f"  [SIZE] More Arabica-range beans → Arabica")
+                elif robusta_range > arabica_range:
+                    size_type = "robusta"
+                    print(f"  [SIZE] More Robusta-range beans → Robusta")
+                else:
+                    # Tie - use average diameter
+                    size_type = "arabica" if avg_diameter >= 8.1 else "robusta"
+                    print(f"  [SIZE] Tie - avg {avg_diameter:.1f}mm → {size_type}")
         else:
-            print(f"  [SIZE] Not enough beans for size analysis")
+            print(f"  [SIZE] Not enough beans for size analysis (need >5, have {len(bean_measurements) if bean_measurements else 0})")
 
         # METHOD 2: Shape-based detection
         shape_type = "?"
@@ -692,28 +659,31 @@ def esp32_analysis_api(request):
         # ===== FINAL DECISION =====
         print(f"\n  [FINAL] Size: {size_type} | Shape: {shape_type} | Model: {model_type}")
 
-        # Voting with size as tiebreaker
         votes_arabica = 0
         votes_robusta = 0
 
-        if size_type == "arabica": votes_arabica += 2  # Size gets 2 votes (most reliable)
+        # Size gets 2 votes (most reliable - based on actual mm measurements)
+        if size_type == "arabica": votes_arabica += 2
         elif size_type == "robusta": votes_robusta += 2
 
+        # Shape gets 1 vote
         if shape_type == "arabica": votes_arabica += 1
         elif shape_type == "robusta": votes_robusta += 1
 
+        # Model gets 1 vote
         if model_type == "arabica": votes_arabica += 1
         elif model_type == "robusta": votes_robusta += 1
 
-        print(f"  [VOTE] Arabica: {votes_arabica}, Robusta: {votes_robusta} (Size=2 votes, Shape=1, Model=1)")
+        print(f"  [VOTE] Arabica: {votes_arabica}, Robusta: {votes_robusta} (Size=2, Shape=1, Model=1)")
 
         if votes_arabica > votes_robusta:
             bean_type = "arabica"
         elif votes_robusta > votes_arabica:
             bean_type = "robusta"
         else:
-            # Tie - trust size range analysis
+            # Tie - trust size (based on real measurements)
             bean_type = size_type if size_type != "?" else "arabica"
+            print(f"  [VOTE] Tie - size wins: {bean_type}")
 
         print(f"  ✅ FINAL TYPE: {bean_type}")
 
