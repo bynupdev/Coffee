@@ -331,7 +331,7 @@ def esp32_analysis_api(request):
         print("-"*40)
         try:
             project = workspace.project("coffee-defects-coin2")
-            version = project.version(2)
+            version = project.version(1)
             coin_predictions = version.model.predict(temp_path, confidence=50).json()
             
             preds = coin_predictions.get('predictions', [])
