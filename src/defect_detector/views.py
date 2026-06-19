@@ -549,13 +549,13 @@ def esp32_analysis_api(request):
         
 
         # ===== STEP 4: BEAN TYPE DETECTION (with size-based logic) =====
-        # ===== STEP 4: BEAN TYPE DETECTION (with clear 8.0/8.1 boundary) =====
+      # ===== STEP 4: BEAN TYPE DETECTION (Average-based decision) =====
         print("\n" + "-"*40)
         print("STEP 4: BEAN TYPE DETECTION")
         print("-"*40)
 
         # METHOD 1: Size-based detection (MOST RELIABLE)
-        # Clear boundary: Robusta ≤ 8.0mm, Arabica ≥ 8.1mm
+        # Uses AVERAGE diameter for stability
         size_type = "?"
         if bean_measurements and len(bean_measurements) > 5:
             diameters = []
@@ -568,33 +568,29 @@ def esp32_analysis_api(request):
                 min_diameter = min(diameters)
                 max_diameter = max(diameters)
                 
-                # Count beans with clear boundary
-                arabica_range = 0   # ≥ 8.1mm
-                robusta_range = 0   # ≤ 8.0mm
-                
+                # Count beans for info only
+                arabica_count = 0
+                robusta_count = 0
                 for d in diameters:
                     if d >= 8.1:
-                        arabica_range += 1
+                        arabica_count += 1
                     else:
-                        robusta_range += 1
+                        robusta_count += 1
                 
-                total = arabica_range + robusta_range
+                total = arabica_count + robusta_count
                 
                 print(f"  [SIZE] Bean diameters: avg={avg_diameter:.1f}mm, min={min_diameter:.1f}mm, max={max_diameter:.1f}mm")
                 print(f"  [SIZE] Boundary: Robusta ≤ 8.0mm | Arabica ≥ 8.1mm")
-                print(f"  [SIZE] Arabica (≥8.1mm): {arabica_range} beans ({arabica_range*100//total if total>0 else 0}%)")
-                print(f"  [SIZE] Robusta (≤8.0mm): {robusta_range} beans ({robusta_range*100//total if total>0 else 0}%)")
+                print(f"  [SIZE] Arabica (≥8.1mm): {arabica_count} beans ({arabica_count*100//total if total>0 else 0}%)")
+                print(f"  [SIZE] Robusta (≤8.0mm): {robusta_count} beans ({robusta_count*100//total if total>0 else 0}%)")
                 
-                if arabica_range > robusta_range:
+                # DECISION: Use average diameter (more stable than counting)
+                if avg_diameter >= 8.1:
                     size_type = "arabica"
-                    print(f"  [SIZE] More Arabica-range beans → Arabica")
-                elif robusta_range > arabica_range:
-                    size_type = "robusta"
-                    print(f"  [SIZE] More Robusta-range beans → Robusta")
                 else:
-                    # Tie - use average diameter
-                    size_type = "arabica" if avg_diameter >= 8.1 else "robusta"
-                    print(f"  [SIZE] Tie - avg {avg_diameter:.1f}mm → {size_type}")
+                    size_type = "robusta"
+                
+                print(f"  [SIZE] Average {avg_diameter:.1f}mm ≥ 8.1mm → {size_type}")
         else:
             print(f"  [SIZE] Not enough beans for size analysis (need >5, have {len(bean_measurements) if bean_measurements else 0})")
 
