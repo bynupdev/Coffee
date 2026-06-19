@@ -467,6 +467,25 @@ def esp32_analysis_api(request):
         else:
             print("  ⏭️ SKIPPED: No coin calibration available")
 
+        # RIGHT AFTER the bean measurement loop, add this:
+        print(f"\n  === PIXEL SIZE DEBUG ===")
+        print(f"  COIN: 80.5px = 22.0mm")
+        print(f"  SCALE: {mm_per_pixel:.4f} mm/pixel")
+        print(f"  TOTAL BEANS: {len(bean_measurements)}")
+
+        if bean_measurements:
+            # Show first 5 beans
+            for i in range(min(5, len(bean_measurements))):
+                b = bean_measurements[i]
+                print(f"  Bean {i}: w_px={b.get('width_px', 0):.0f}, h_px={b.get('height_px', 0):.0f}, d_mm={b['diameter_mm']}mm")
+            
+            # Show averages
+            avg_w = sum(b.get('width_px', 0) for b in bean_measurements) / len(bean_measurements)
+            avg_h = sum(b.get('height_px', 0) for b in bean_measurements) / len(bean_measurements)
+            print(f"  AVG: w_px={avg_w:.0f}, h_px={avg_h:.0f}")
+            print(f"  RATIO: beans are {avg_w/80.5*100:.0f}% of coin width")
+            print(f"  EXPECTED: 25-35% (5-8mm beans vs 22mm coin)")
+
         # ===== STEP 3: DEFECT DETECTION =====
         print("\n" + "-"*40)
         print("STEP 3: DEFECT DETECTION")
