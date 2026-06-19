@@ -361,9 +361,14 @@ def esp32_analysis_api(request):
         print("\n" + "-"*40)
         print("STEP 2: BEAN MEASUREMENT")
         print("-"*40)
+
+        # Constants for coordinate correction
+        ORIGINAL_WIDTH = 800
+        ORIGINAL_HEIGHT = 600
+        QUALITY_MODEL_SIZE = 640
+
         if mm_per_pixel:
             try:
-                # project = workspace.project("coffee-bean-quality")
                 project = workspace.project("coffee-bean-quality-jvz1r")
                 version = project.version(1)
                 quality_predictions = version.model.predict(temp_path, confidence=20).json()
@@ -373,8 +378,14 @@ def esp32_analysis_api(request):
                 
                 for pred in preds:
                     cls = pred.get('class', '')
-                    w_px = pred.get('width', 0)
-                    h_px = pred.get('height', 0)
+                    w_stretched = pred.get('width', 0)
+                    h_stretched = pred.get('height', 0)
+                    
+                    # Convert from 640x640 stretched space back to 800x600 original
+                    w_px = w_stretched * (ORIGINAL_WIDTH / QUALITY_MODEL_SIZE)
+                    h_px = h_stretched * (ORIGINAL_HEIGHT / QUALITY_MODEL_SIZE)
+                    
+                    # Convert to millimeters
                     w_mm = round(w_px * mm_per_pixel, 1)
                     h_mm = round(h_px * mm_per_pixel, 1)
                     d_mm = round((w_mm + h_mm) / 2, 1)
@@ -383,7 +394,9 @@ def esp32_analysis_api(request):
                         'class': cls,
                         'width_mm': w_mm,
                         'height_mm': h_mm,
-                        'diameter_mm': d_mm
+                        'diameter_mm': d_mm,
+                        'width_px': w_px,
+                        'height_px': h_px
                     })
                 
                 total_beans_in_sample = len(bean_measurements)
