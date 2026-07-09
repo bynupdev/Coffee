@@ -12,6 +12,10 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 
 from pathlib import Path
 import os
+import dj_database_url
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -82,36 +86,30 @@ WSGI_APPLICATION = 'src.wsgi.application'
 
 # DATABASE_URL="postgresql://neondb_owner:npg_hfb83ryTtMVD@ep-rough-pond-a8tx4aux-pooler.eastus2.azure.neon.tech/neondb?sslmode=require&channel_binding=require"
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.sqlite3',
+#         'NAME': BASE_DIR / 'db.sqlite3',
+#     }
+# }
+
+DATABASE_URL=os.getenv('DATABASE_URL')
+if DEBUG:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
     }
-}
 
-# if DEBUG:
-#     DATABASES = {
-#         'default': {
-#             'ENGINE': 'django.db.backends.sqlite3',
-#             'NAME': BASE_DIR / 'db.sqlite3',
-#         }
-#     }
-
-# else:
-#     DATABASES = {
-#         'default': {
-#             'ENGINE': 'django.db.backends.postgresql',
-#             'NAME': 'neondb',
-#             'USER': 'neondb_owner',
-#             'PASSWORD': 'npg_hfb83ryTtMVD',
-#             'HOST': 'ep-rough-pond-a8tx4aux-pooler.eastus2.azure.neon.tech',
-#             'PORT': '5432',
-#             'OPTIONS': {
-#                 'sslmode': 'require',
-#             },
-#         }
-#     }
-
+else:
+    DATABASES = {
+    'default': dj_database_url.config(
+        default=DATABASE_URL,
+        conn_max_age=600,
+        conn_health_checks=True,
+        )
+    }
 
 # Password validation
 # https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
