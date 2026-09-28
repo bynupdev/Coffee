@@ -27,6 +27,7 @@ fsspec==2026.3.0
 gast==0.7.0
 google-pasta==0.2.0
 grpcio==1.80.0
+grpcio-status
 gunicorn==26.0.0
 h11==0.16.0
 h5py==3.14.0
